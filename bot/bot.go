@@ -10,17 +10,17 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-var subs []Subscriber
-var currectPoll *BookPoll = &BookPoll{}
-
 type Bot struct {
 	cfg   *config.AppConfig
 	tgBot *tgbotapi.BotAPI
+	poll  *BookPoll
+	subs  []Subscriber
 }
 
 func NewBot(cfg *config.AppConfig) *Bot {
 	return &Bot{
-		cfg: cfg,
+		cfg:  cfg,
+		poll: &BookPoll{},
 	}
 }
 
@@ -39,7 +39,7 @@ func (b *Bot) Run() {
 
 	updates := b.tgBot.GetUpdatesChan(u)
 
-	subs = loadSubs()
+	b.subs = loadSubs()
 
 	for update := range updates {
 		if update.Message != nil {
@@ -71,31 +71,31 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 		FirstName: update.Message.From.FirstName,
 		LastName:  update.Message.From.LastName,
 	}
-	subs = append(subs, newSub)
-	persistSubs(subs)
+	b.subs = append(b.subs, newSub)
+	persistSubs(b.subs)
 }
 
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
-	if currectPoll.IsStarted {
+	if b.poll.IsStarted {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Голосование уже запущено, дождитесь окончания голосования")
 		b.tgBot.Send(msg)
 		return
 	} else {
 		b.initParticipants()
-		currectPoll.IsStarted = true
+		b.poll.IsStarted = true
 	}
 }
 
 func (b *Bot) handleParticipantChoice(update *tgbotapi.Update) {
 	var msg tgbotapi.MessageConfig
 	userId := update.Message.From.ID
-	if !currectPoll.IsStarted {
+	if !b.poll.IsStarted {
 		msg = tgbotapi.NewMessage(userId, "Голосование еще не началось или уже закончилось!")
 		b.tgBot.Send(msg)
 		return
 	} else {
 		var user *Participant
-		for _, p := range currectPoll.Participants {
+		for _, p := range b.poll.Participants {
 			if p.Id == userId {
 				user = p
 				break
@@ -121,7 +121,7 @@ func (b *Bot) handleParticipantChoice(update *tgbotapi.Update) {
 		}
 
 		allVoted := true
-		for _, p := range currectPoll.Participants {
+		for _, p := range b.poll.Participants {
 			if p.Status != FINISHED {
 				allVoted = false
 				break
@@ -130,11 +130,11 @@ func (b *Bot) handleParticipantChoice(update *tgbotapi.Update) {
 
 		if allVoted {
 			// close poll
-			currectPoll.IsStarted = false
-			books := make([]string, 0, len(currectPoll.Participants))
+			b.poll.IsStarted = false
+			books := make([]string, 0, len(b.poll.Participants))
 			books = append(books, "Mock book")
 
-			for _, p := range currectPoll.Participants {
+			for _, p := range b.poll.Participants {
 				books = append(books, p.Book.Title)
 			}
 
@@ -144,15 +144,15 @@ func (b *Bot) handleParticipantChoice(update *tgbotapi.Update) {
 
 			b.closePollAfterDelay(msgid.MessageID, 10*time.Second)
 
-			currectPoll = &BookPoll{}
+			b.poll = &BookPoll{}
 		}
 	}
 
 }
 
 func (b *Bot) initParticipants() {
-	participants := make([]*Participant, 0, len(subs))
-	for _, sub := range subs {
+	participants := make([]*Participant, 0, len(b.subs))
+	for _, sub := range b.subs {
 		msg := tgbotapi.NewMessage(sub.Id, "Пожалуйста, предложи название книги:")
 		b.tgBot.Send(msg)
 		p := &Participant{
@@ -165,7 +165,7 @@ func (b *Bot) initParticipants() {
 
 		participants = append(participants, p)
 	}
-	currectPoll.Participants = participants
+	b.poll.Participants = participants
 }
 
 func (b *Bot) closePollAfterDelay(messageId int, delay time.Duration) {
