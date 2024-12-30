@@ -65,7 +65,16 @@ func (b *Bot) Run() {
 	}
 }
 
+// handleSubscription handles /subscribe command from a user that adds them to subs
+// if they are not subscribed yet
 func (b *Bot) handleSubscription(update *tgbotapi.Update) {
+	// reject subscription if a user is subscribed already
+	if b.isAlreadySub(update.Message.From.ID) {
+		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже подписан. Осталось дождаться голосования.")
+		b.tgBot.Send(msg)
+		return
+	}
+
 	newSub := Subscriber{
 		Id:        update.Message.From.ID,
 		Nick:      update.Message.From.UserName,
@@ -125,60 +134,6 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 		b.closePollAfterDelay(msgid, 10*time.Second)
 		b.closeBookGathering()
 	}
-
-}
-
-func (b *Bot) initParticipants() {
-	participants := make([]*Participant, 0, len(b.subs))
-	for _, sub := range b.subs {
-		msg := tgbotapi.NewMessage(sub.Id, "Пожалуйста, предложи название книги:")
-		b.tgBot.Send(msg)
-		p := &Participant{
-			Id:        sub.Id,
-			FirstName: sub.FirstName,
-			LastName:  sub.LastName,
-			Nick:      sub.Nick,
-			Status:    BOOK_IS_ASKED,
-		}
-
-		participants = append(participants, p)
-	}
-	b.bookGathering.Participants = participants
-}
-
-func (b *Bot) closePollAfterDelay(messageId int, delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		finishPoll := tgbotapi.StopPollConfig{
-			BaseEdit: tgbotapi.BaseEdit{
-				ChatID:    b.cfg.GroupId, // The chat ID where the poll was sent
-				MessageID: messageId,     // The message ID of the poll
-			},
-		}
-		res, err := b.tgBot.StopPoll(finishPoll)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-
-		b.announceWinner(&res)
-	}()
-}
-
-func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
-	winners := defineWinners(poll)
-	var txt string
-	switch len(winners) {
-	case 0:
-		txt = fmt.Sprint("Что-то пошло не так, не удалось определить победителя :(")
-	case 1:
-		txt = fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'", winners[0])
-	default:
-		txt = fmt.Sprintf("К сожаление выявить одного победителя не удалось! Так как Андрей очень ленивый и слабый программист, он не смог написать для меня логику, чтобы запустить еще одно голосование... Вам придется самостоятеьно запустить голосование и выбрать победителя из этих книг: %s\n", strings.Join(winners, ","))
-	}
-
-	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
-	b.tgBot.Send(msg)
 }
 
 func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
@@ -220,6 +175,63 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже закончил голосование!")
 		b.tgBot.Send(msg)
 	}
+}
+
+// initParticipants fills participants to the bookGathering filds by
+// converting subscribers and sends them a message with asking a name of a book
+func (b *Bot) initParticipants() {
+	participants := make([]*Participant, 0, len(b.subs))
+	for _, sub := range b.subs {
+		msg := tgbotapi.NewMessage(sub.Id, "Пожалуйста, предложи название книги:")
+		b.tgBot.Send(msg)
+		p := &Participant{
+			Id:        sub.Id,
+			FirstName: sub.FirstName,
+			LastName:  sub.LastName,
+			Nick:      sub.Nick,
+			Status:    BOOK_IS_ASKED,
+		}
+
+		participants = append(participants, p)
+	}
+	b.bookGathering.Participants = participants
+}
+
+// closePollAfterDelay stops an active poll and sends a message with about a winner
+func (b *Bot) closePollAfterDelay(messageId int, delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		finishPoll := tgbotapi.StopPollConfig{
+			BaseEdit: tgbotapi.BaseEdit{
+				ChatID:    b.cfg.GroupId, // The chat ID where the poll was sent
+				MessageID: messageId,     // The message ID of the poll
+			},
+		}
+		res, err := b.tgBot.StopPoll(finishPoll)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+
+		b.announceWinner(&res)
+	}()
+}
+
+// announceWinner defines a winner and sends a message to the group
+func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
+	winners := defineWinners(poll)
+	var txt string
+	switch len(winners) {
+	case 0:
+		txt = fmt.Sprint("Что-то пошло не так, не удалось определить победителя :(")
+	case 1:
+		txt = fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'", winners[0])
+	default:
+		txt = fmt.Sprintf("К сожаление выявить одного победителя не удалось! Так как Андрей очень ленивый и слабый программист, он не смог написать для меня логику, чтобы запустить еще одно голосование... Вам придется самостоятеьно запустить голосование и выбрать победителя из этих книг: %s\n", strings.Join(winners, ","))
+	}
+
+	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
+	b.tgBot.Send(msg)
 }
 
 func (b *Bot) isAllVoted() bool {
@@ -313,19 +325,11 @@ func (b *Bot) extractBooks() []string {
 	return books
 }
 
-func defineWinners(res *tgbotapi.Poll) []string {
-	if res == nil {
-		return nil
-	}
-	m := make(map[int][]string)
-	max := -1
-
-	for _, o := range res.Options {
-		if o.VoterCount > max {
-			max = o.VoterCount
+func (b *Bot) isAlreadySub(userId int64) bool {
+	for _, s := range b.subs {
+		if s.Id == userId {
+			return true
 		}
-		m[o.VoterCount] = append(m[o.VoterCount], o.Text)
 	}
-
-	return m[max]
+	return false
 }

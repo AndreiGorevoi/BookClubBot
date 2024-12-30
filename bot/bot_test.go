@@ -1,67 +1,34 @@
 package bot
 
-import (
-	"slices"
-	"testing"
+import "testing"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-)
-
-func TestDefineWinners(t *testing.T) {
+func TestIsAlreadySub(t *testing.T) {
+	bot := &Bot{
+		subs: []Subscriber{
+			{Id: 123, FirstName: "John", LastName: "Doe", Nick: "Jony"},
+			{Id: 321, FirstName: "John", LastName: "Doe", Nick: "Jony"},
+		},
+	}
 	data := map[string]struct {
-		input           *tgbotapi.Poll
-		expectedWinners []string
-		expectedLen     int
+		input    int64
+		expected bool
 	}{
-		`one winner`: {
-			input: &tgbotapi.Poll{
-				Options: []tgbotapi.PollOption{
-					{Text: "Book1", VoterCount: 3},
-					{Text: "Book2", VoterCount: 2},
-					{Text: "Book3", VoterCount: 1},
-				},
-			},
-			expectedWinners: []string{"Book1"},
-			expectedLen:     1,
+		`user subscribed`: {
+			input:    123,
+			expected: true,
 		},
-		`two winners`: {
-			input: &tgbotapi.Poll{
-				Options: []tgbotapi.PollOption{
-					{Text: "Book1", VoterCount: 3},
-					{Text: "Book2", VoterCount: 3},
-					{Text: "Book3", VoterCount: 1},
-				},
-			},
-			expectedWinners: []string{"Book1", "Book2"},
-			expectedLen:     2,
-		},
-		`zero winners`: {
-			input: &tgbotapi.Poll{
-				Options: []tgbotapi.PollOption{},
-			},
-			expectedWinners: []string{},
-			expectedLen:     0,
-		},
-		`nil imput`: {
-			input:           nil,
-			expectedWinners: []string{},
-			expectedLen:     0,
+		`user is not subscribed`: {
+			input:    333,
+			expected: false,
 		},
 	}
 
 	for name, tt := range data {
 		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got := defineWinners(tt.input)
-			if len(got) != tt.expectedLen {
-				t.Errorf("expected len: %d, got: %d", tt.expectedLen, len(got))
+			got := bot.isAlreadySub(tt.input)
+			if got != tt.expected {
+				t.Errorf("expected: %v, got: %v", tt.expected, got)
 			}
-			for _, s := range got {
-				if !slices.Contains(tt.expectedWinners, s) {
-					t.Errorf("expected winners: %v doesn't containt %s", tt.expectedWinners, s)
-				}
-			}
-
 		})
 	}
 }
