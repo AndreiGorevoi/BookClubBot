@@ -183,11 +183,30 @@ func (b *Bot) closePollAfterDelay(messageId int, delay time.Duration) {
 			return
 		}
 
-		b.defineWinner(&res)
+		b.announceWinner(&res)
 	}()
 }
 
-func (b *Bot) defineWinner(res *tgbotapi.Poll) {
+func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
+	winners := defineWinners(poll)
+	var txt string
+	switch len(winners) {
+	case 0:
+		txt = fmt.Sprint("Что-то пошло не так, не удалось определить победителя :(")
+	case 1:
+		txt = fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'", winners[0])
+	default:
+		txt = fmt.Sprintf("К сожаление выявить одного победителя не удалось! Так как Андрей очень ленивый и слабый программист, он не смог написать для меня логику, чтобы запустить еще одно голосование... Вам придется самостоятеьно запустить голосование и выбрать победителя из этих книг: %s\n", strings.Join(winners, ","))
+	}
+
+	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
+	b.tgBot.Send(msg)
+}
+
+func defineWinners(res *tgbotapi.Poll) []string {
+	if res == nil {
+		return nil
+	}
 	m := make(map[int][]string)
 	max := -1
 
@@ -198,16 +217,5 @@ func (b *Bot) defineWinner(res *tgbotapi.Poll) {
 		m[o.VoterCount] = append(m[o.VoterCount], o.Text)
 	}
 
-	winners := m[max]
-
-	if len(winners) > 1 {
-		txt := fmt.Sprintf("К сожаление выявить одного победителя не удалось! Так как Андрей очень ленивый и слабый программист, он не смог написать для меня логику, чтобы запустить еще одно голосование... Вам придется самостоятеьно запустить голосование и выбрать победителя из этих книг: %s\n", strings.Join(winners, ","))
-		msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
-		b.tgBot.Send(msg)
-		return
-	}
-
-	txt := fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'", winners[0])
-	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
-	b.tgBot.Send(msg)
+	return m[max]
 }

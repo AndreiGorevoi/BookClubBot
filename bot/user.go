@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-const DBPath = "./bot/db.json"
+const DBPath = "./db/db.json"
 
 var mu sync.Mutex
 
