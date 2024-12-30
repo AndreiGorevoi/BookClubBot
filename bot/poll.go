@@ -5,6 +5,7 @@ const (
 	BOOK_IS_ASKED
 	AUTHOR_IS_ASKED
 	DESCRIPTION_IS_ASKED
+	IMAGE_IS_ASKED
 	FINISHED
 )
 
@@ -26,4 +27,5 @@ type Book struct {
 	Title       string
 	Author      string
 	Description string
+	PhotoId     string
 }

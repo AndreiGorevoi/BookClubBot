@@ -2,6 +2,7 @@ package bot
 
 import (
 	"BookClubBot/config"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -73,6 +74,8 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 	}
 	b.subs = append(b.subs, newSub)
 	persistSubs(b.subs)
+	msg := tgbotapi.NewMessage(update.Message.From.ID, "Добро пожаловать в наш книжный клуб! Когда начнется следующее голосование за книгу, я приду к тебе за твоим вариантом :)")
+	b.tgBot.Send(msg)
 }
 
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
@@ -112,6 +115,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	b.handleParticipantAnswer(particiapant, update)
 
 	if b.isAllVoted() {
+		b.msgAboutGatheringBooks()
 		msgid, err := b.runTelegramPoll()
 		if err != nil {
 			log.Printf("cannot run poll: %v\n", err)
@@ -196,8 +200,21 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 	case DESCRIPTION_IS_ASKED:
 		desc := update.Message.Text
 		p.Book.Description = desc
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Готово! Я добавил твое книгу в следующее голосование.")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, "Прикрепи фотографию обложки. Использована будет только одна картинка.")
 		b.tgBot.Send(msg)
+		p.Status = IMAGE_IS_ASKED
+	case IMAGE_IS_ASKED:
+		if update.Message.Photo != nil {
+			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
+			p.Book.PhotoId = photo.FileID
+
+			msg := tgbotapi.NewMessage(update.Message.From.ID, "Готово! Я добавил твое книгу в следующее голосование.")
+			b.tgBot.Send(msg)
+		} else {
+			// If no photo is provided, skip to the next step
+			msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты пропустил изображение. Я добавил твою книгу в следующее голосование.")
+			b.tgBot.Send(msg)
+		}
 		p.Status = FINISHED
 	case FINISHED:
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже закончил голосование!")
@@ -219,10 +236,61 @@ func (b *Bot) closeBookGathering() {
 	b.bookGathering = &BookGathering{}
 }
 
+func (b *Bot) msgAboutGatheringBooks() {
+	// Ensure there are participants with books
+	if b.bookGathering == nil || len(b.bookGathering.Participants) == 0 {
+		log.Println("No participants or books found.")
+		return
+	}
+
+	var mediaGroup []interface{}
+
+	for _, participant := range b.bookGathering.Participants {
+		// Check if the participant has suggested a book
+		if participant.Book == nil {
+			continue
+		}
+
+		// Create caption for the book
+		caption := fmt.Sprintf(
+			"📚 *Название*: %s\n👤 *Автор*: %s\n📝 *Описание*: %s",
+			participant.Book.Title,
+			participant.Book.Author,
+			participant.Book.Description,
+		)
+
+		// Add an image for the book
+		bookImage := tgbotapi.NewInputMediaPhoto(tgbotapi.FileID(participant.Book.PhotoId))
+		bookImage.Caption = caption
+		bookImage.ParseMode = "Markdown"
+
+		mediaGroup = append(mediaGroup, bookImage)
+	}
+
+	// Check if there are any media items to send
+	if len(mediaGroup) == 0 {
+		log.Println("No books to send in the media group.")
+		return
+	}
+
+	// Create the media group message
+	msg := tgbotapi.NewMediaGroup(b.cfg.GroupId, mediaGroup)
+
+	// Send the media group
+	_, err := b.tgBot.Send(msg)
+	if err != nil {
+		log.Printf("Failed to send media group: %v\n", err)
+		return
+	}
+}
+
 func (b *Bot) runTelegramPoll() (int, error) {
 	books := b.extractBooks()
+	if len(books) < 2 {
+		return 0, errors.New("cannot run a poll as there is less than 2 books")
+	}
 	poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу", books...)
-	poll.IsAnonymous = true
+	poll.IsAnonymous = false
 	poll.AllowsMultipleAnswers = true
 	msg, err := b.tgBot.Send(poll)
 	if err != nil {
@@ -233,9 +301,12 @@ func (b *Bot) runTelegramPoll() (int, error) {
 
 func (b *Bot) extractBooks() []string {
 	books := make([]string, 0, len(b.bookGathering.Participants))
-	books = append(books, "Mock book")
+	books = append(books, "Книга: Властелин Колец. Автор: Джон Роуэл Толкин")
 
 	for _, p := range b.bookGathering.Participants {
+		if p.Book == nil {
+			continue
+		}
 		name := fmt.Sprintf("Книга: %s. Автор: %s", p.Book.Title, p.Book.Author)
 		books = append(books, name)
 	}
