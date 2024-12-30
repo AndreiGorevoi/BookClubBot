@@ -184,6 +184,20 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 		p.Book = &Book{
 			Title: book,
 		}
+		msg := tgbotapi.NewMessage(update.Message.From.ID, "Кто автор этой книги?")
+		b.tgBot.Send(msg)
+		p.Status = AUTHOR_IS_ASKED
+	case AUTHOR_IS_ASKED:
+		author := update.Message.Text
+		p.Book.Author = author
+		msg := tgbotapi.NewMessage(update.Message.From.ID, "Напиши краткое описание книги.")
+		b.tgBot.Send(msg)
+		p.Status = DESCRIPTION_IS_ASKED
+	case DESCRIPTION_IS_ASKED:
+		desc := update.Message.Text
+		p.Book.Description = desc
+		msg := tgbotapi.NewMessage(update.Message.From.ID, "Готово! Я добавил твое книгу в следующее голосование.")
+		b.tgBot.Send(msg)
 		p.Status = FINISHED
 	case FINISHED:
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже закончил голосование!")
@@ -222,7 +236,7 @@ func (b *Bot) extractBooks() []string {
 	books = append(books, "Mock book")
 
 	for _, p := range b.bookGathering.Participants {
-		name := fmt.Sprintf("%s.%s", p.Book.Title, p.Book.Author)
+		name := fmt.Sprintf("Книга: %s. Автор: %s", p.Book.Title, p.Book.Author)
 		books = append(books, name)
 	}
 	return books
