@@ -11,16 +11,16 @@ import (
 )
 
 type Bot struct {
-	cfg   *config.AppConfig
-	tgBot *tgbotapi.BotAPI
-	poll  *BookPoll
-	subs  []Subscriber
+	cfg           *config.AppConfig
+	tgBot         *tgbotapi.BotAPI
+	bookGathering *BookGathering
+	subs          []Subscriber
 }
 
 func NewBot(cfg *config.AppConfig) *Bot {
 	return &Bot{
-		cfg:  cfg,
-		poll: &BookPoll{},
+		cfg:           cfg,
+		bookGathering: &BookGathering{},
 	}
 }
 
@@ -56,7 +56,7 @@ func (b *Bot) Run() {
 				case "/start_vote":
 					b.handleStartVote(&update)
 				default:
-					b.handleParticipantChoice(&update)
+					b.handleUserMsg(&update)
 				}
 			}
 		}
@@ -76,76 +76,50 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 }
 
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
-	if b.poll.IsStarted {
+	if b.bookGathering.IsStarted {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Голосование уже запущено, дождитесь окончания голосования")
 		b.tgBot.Send(msg)
 		return
 	} else {
 		b.initParticipants()
-		b.poll.IsStarted = true
+		b.bookGathering.IsStarted = true
 	}
 }
 
-func (b *Bot) handleParticipantChoice(update *tgbotapi.Update) {
+func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	var msg tgbotapi.MessageConfig
-	userId := update.Message.From.ID
-	if !b.poll.IsStarted {
-		msg = tgbotapi.NewMessage(userId, "Голосование еще не началось или уже закончилось!")
+	currentUserId := update.Message.From.ID
+	if !b.bookGathering.IsStarted {
+		msg = tgbotapi.NewMessage(currentUserId, "Голосование еще не началось или уже закончилось!")
 		b.tgBot.Send(msg)
 		return
-	} else {
-		var user *Participant
-		for _, p := range b.poll.Participants {
-			if p.Id == userId {
-				user = p
-				break
-			}
+	}
+
+	var particiapant *Participant
+	// check whether the particiapant is a participant of a poll
+	for _, p := range b.bookGathering.Participants {
+		if p.Id == currentUserId {
+			particiapant = p
+			break
 		}
-		if user == nil {
-			msg = tgbotapi.NewMessage(userId, "Похоже ты не участник текущего голосования")
-			b.tgBot.Send(msg)
+	}
+	if particiapant == nil {
+		msg = tgbotapi.NewMessage(currentUserId, "Похоже ты не участник текущего голосования")
+		b.tgBot.Send(msg)
+		return
+	}
+
+	b.handleParticipantAnswer(particiapant, update)
+
+	if b.isAllVoted() {
+		msgid, err := b.runTelegramPoll()
+		if err != nil {
+			log.Printf("cannot run poll: %v\n", err)
 			return
 		}
 
-		switch user.Status {
-		case BOOK_IS_ASKED:
-			book := update.Message.Text
-			user.Book = &Book{
-				Title: book,
-			}
-			user.Status = FINISHED
-		case FINISHED:
-			msg = tgbotapi.NewMessage(userId, "Ты уже закончил голосование!")
-			b.tgBot.Send(msg)
-			return
-		}
-
-		allVoted := true
-		for _, p := range b.poll.Participants {
-			if p.Status != FINISHED {
-				allVoted = false
-				break
-			}
-		}
-
-		if allVoted {
-			// close poll
-			b.poll.IsStarted = false
-			books := make([]string, 0, len(b.poll.Participants))
-			books = append(books, "Mock book")
-
-			for _, p := range b.poll.Participants {
-				books = append(books, p.Book.Title)
-			}
-
-			poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу", books...)
-			poll.IsAnonymous = true
-			msgid, _ := b.tgBot.Send(poll)
-
-			b.closePollAfterDelay(msgid.MessageID, 10*time.Second)
-
-			b.poll = &BookPoll{}
-		}
+		b.closePollAfterDelay(msgid, 10*time.Second)
+		b.closeBookGathering()
 	}
 
 }
@@ -165,7 +139,7 @@ func (b *Bot) initParticipants() {
 
 		participants = append(participants, p)
 	}
-	b.poll.Participants = participants
+	b.bookGathering.Participants = participants
 }
 
 func (b *Bot) closePollAfterDelay(messageId int, delay time.Duration) {
@@ -201,6 +175,57 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 
 	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
 	b.tgBot.Send(msg)
+}
+
+func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
+	switch p.Status {
+	case BOOK_IS_ASKED:
+		book := update.Message.Text
+		p.Book = &Book{
+			Title: book,
+		}
+		p.Status = FINISHED
+	case FINISHED:
+		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже закончил голосование!")
+		b.tgBot.Send(msg)
+	}
+}
+
+func (b *Bot) isAllVoted() bool {
+	for _, p := range b.bookGathering.Participants {
+		if p.Status != FINISHED {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *Bot) closeBookGathering() {
+	b.bookGathering.IsStarted = false
+	b.bookGathering = &BookGathering{}
+}
+
+func (b *Bot) runTelegramPoll() (int, error) {
+	books := b.extractBooks()
+	poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу", books...)
+	poll.IsAnonymous = true
+	poll.AllowsMultipleAnswers = true
+	msg, err := b.tgBot.Send(poll)
+	if err != nil {
+		return 0, err
+	}
+	return msg.MessageID, nil
+}
+
+func (b *Bot) extractBooks() []string {
+	books := make([]string, 0, len(b.bookGathering.Participants))
+	books = append(books, "Mock book")
+
+	for _, p := range b.bookGathering.Participants {
+		name := fmt.Sprintf("%s.%s", p.Book.Title, p.Book.Author)
+		books = append(books, name)
+	}
+	return books
 }
 
 func defineWinners(res *tgbotapi.Poll) []string {

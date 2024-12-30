@@ -6,7 +6,7 @@ const (
 	FINISHED
 )
 
-type BookPoll struct {
+type BookGathering struct {
 	Participants []*Participant
 	IsStarted    bool
 }
