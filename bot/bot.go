@@ -48,19 +48,25 @@ func (b *Bot) Run() {
 				if update.Poll == nil || update.PollAnswer == nil {
 					continue // ignore all messages from group
 				}
-
-				// handle poll answer
-			} else if update.Message != nil {
-				switch update.Message.Text {
-				case "/subscribe":
-					b.handleSubscription(&update)
-				case "/start_vote":
-					b.handleStartVote(&update)
-				default:
-					b.handleUserMsg(&update)
-				}
 			}
+
+			switch update.Message.Text {
+			case "/subscribe":
+				b.handleSubscription(&update)
+			case "/start_vote":
+				b.handleStartVote(&update)
+			default:
+				b.handleUserMsg(&update)
+			}
+			continue
 		}
+
+		// if update.Poll != nil || update.PollAnswer != nil {
+		// 	fmt.Println("Poll:", update.Poll)
+		// 	fmt.Println("PollAnswer:", update.PollAnswer)
+		// 	fmt.Println("OptionIDs:", update.PollAnswer.OptionIDs)
+		// 	// handle poll answer
+		// }
 
 	}
 }
@@ -131,34 +137,34 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 			return
 		}
 
-		b.closePollAfterDelay(msgid, 10*time.Second)
+		b.closePollAfterDelay(msgid, 30*time.Second)
 		b.closeBookGathering()
 	}
 }
 
 func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 	switch p.Status {
-	case BOOK_IS_ASKED:
+	case bookAsked:
 		book := update.Message.Text
 		p.Book = &Book{
 			Title: book,
 		}
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Кто автор этой книги?")
 		b.tgBot.Send(msg)
-		p.Status = AUTHOR_IS_ASKED
-	case AUTHOR_IS_ASKED:
+		p.Status = authorAsked
+	case authorAsked:
 		author := update.Message.Text
 		p.Book.Author = author
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Напиши краткое описание книги.")
 		b.tgBot.Send(msg)
-		p.Status = DESCRIPTION_IS_ASKED
-	case DESCRIPTION_IS_ASKED:
+		p.Status = descriptionAsked
+	case descriptionAsked:
 		desc := update.Message.Text
 		p.Book.Description = desc
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Прикрепи фотографию обложки. Использована будет только одна картинка.")
 		b.tgBot.Send(msg)
-		p.Status = IMAGE_IS_ASKED
-	case IMAGE_IS_ASKED:
+		p.Status = imageAsked
+	case imageAsked:
 		if update.Message.Photo != nil {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
 			p.Book.PhotoId = photo.FileID
@@ -170,8 +176,8 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 			msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты пропустил изображение. Я добавил твою книгу в следующее голосование.")
 			b.tgBot.Send(msg)
 		}
-		p.Status = FINISHED
-	case FINISHED:
+		p.Status = finished
+	case finished:
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже закончил голосование!")
 		b.tgBot.Send(msg)
 	}
@@ -189,7 +195,7 @@ func (b *Bot) initParticipants() {
 			FirstName: sub.FirstName,
 			LastName:  sub.LastName,
 			Nick:      sub.Nick,
-			Status:    BOOK_IS_ASKED,
+			Status:    bookAsked,
 		}
 
 		participants = append(participants, p)
@@ -236,7 +242,7 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 
 func (b *Bot) isAllVoted() bool {
 	for _, p := range b.bookGathering.Participants {
-		if p.Status != FINISHED {
+		if p.Status != finished {
 			return false
 		}
 	}
@@ -263,19 +269,10 @@ func (b *Bot) msgAboutGatheringBooks() {
 			continue
 		}
 
-		// Create caption for the book
-		caption := fmt.Sprintf(
-			"📚 *Название*: %s\n👤 *Автор*: %s\n📝 *Описание*: %s",
-			participant.Book.Title,
-			participant.Book.Author,
-			participant.Book.Description,
-		)
-
 		// Add an image for the book
-		bookImage := tgbotapi.NewInputMediaPhoto(tgbotapi.FileID(participant.Book.PhotoId))
-		bookImage.Caption = caption
+		bookImage := participant.bookImage()
+		bookImage.Caption = participant.bookCaption()
 		bookImage.ParseMode = "Markdown"
-
 		mediaGroup = append(mediaGroup, bookImage)
 	}
 
@@ -332,4 +329,12 @@ func (b *Bot) isAlreadySub(userId int64) bool {
 		}
 	}
 	return false
+}
+
+func (b *Bot) getPhotoId(p *Participant) tgbotapi.FileID {
+	if p.Book.PhotoId != "" {
+		return tgbotapi.FileID(p.Book.PhotoId)
+	}
+
+	return ""
 }
