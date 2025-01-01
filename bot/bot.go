@@ -384,6 +384,7 @@ func (b *Bot) getPhotoId(p *Participant) tgbotapi.FileID {
 	return ""
 }
 
+// clearPoll refreshes the state of a telegram poll
 func (b *Bot) clearPoll() {
 	b.telegramPoll = &telegramPoll{
 		voted: make(map[int64]struct{}),
