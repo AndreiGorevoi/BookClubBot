@@ -16,12 +16,16 @@ type Bot struct {
 	tgBot         *tgbotapi.BotAPI
 	bookGathering *BookGathering
 	subs          []Subscriber
+	telegramPoll  *telegramPoll
 }
 
 func NewBot(cfg *config.AppConfig) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &BookGathering{},
+		telegramPoll: &telegramPoll{
+			voted: make(map[int64]struct{}),
+		},
 	}
 }
 
@@ -45,11 +49,10 @@ func (b *Bot) Run() {
 	for update := range updates {
 		if update.Message != nil {
 			if update.Message.Chat.ID == b.cfg.GroupId {
-				if update.Poll == nil || update.PollAnswer == nil {
-					continue // ignore all messages from group
-				}
+				continue // ignore all messages from group
 			}
 
+			// handle msgs from users
 			switch update.Message.Text {
 			case "/subscribe":
 				b.handleSubscription(&update)
@@ -61,13 +64,17 @@ func (b *Bot) Run() {
 			continue
 		}
 
-		// if update.Poll != nil || update.PollAnswer != nil {
-		// 	fmt.Println("Poll:", update.Poll)
-		// 	fmt.Println("PollAnswer:", update.PollAnswer)
-		// 	fmt.Println("OptionIDs:", update.PollAnswer.OptionIDs)
-		// 	// handle poll answer
-		// }
+		if update.PollAnswer != nil {
+			if !b.telegramPoll.isActive {
+				continue // do nothing as there is no active poll
+			}
 
+			// count all unique votes
+			b.telegramPoll.voted[update.PollAnswer.User.ID] = struct{}{}
+			if len(b.telegramPoll.voted) >= b.telegramPoll.participants {
+				b.closeTelegramPoll()
+			}
+		}
 	}
 }
 
@@ -130,15 +137,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	b.handleParticipantAnswer(particiapant, update)
 
 	if b.isAllVoted() {
-		b.msgAboutGatheringBooks()
-		msgid, err := b.runTelegramPoll()
-		if err != nil {
-			log.Printf("cannot run poll: %v\n", err)
-			return
-		}
-
-		b.closePollAfterDelay(msgid, 30*time.Second)
-		b.closeBookGathering()
+		b.runTelegramPollFlow()
 	}
 }
 
@@ -203,24 +202,33 @@ func (b *Bot) initParticipants() {
 	b.bookGathering.Participants = participants
 }
 
-// closePollAfterDelay stops an active poll and sends a message with about a winner
-func (b *Bot) closePollAfterDelay(messageId int, delay time.Duration) {
+// closePollAfterDelay runs a gourotine that stops a poll after a given delay
+func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		finishPoll := tgbotapi.StopPollConfig{
-			BaseEdit: tgbotapi.BaseEdit{
-				ChatID:    b.cfg.GroupId, // The chat ID where the poll was sent
-				MessageID: messageId,     // The message ID of the poll
-			},
-		}
-		res, err := b.tgBot.StopPoll(finishPoll)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-
-		b.announceWinner(&res)
+		b.closeTelegramPoll()
 	}()
+}
+
+// closeTelegramPoll stops a poll and anounce the winner
+func (b *Bot) closeTelegramPoll() {
+	if !b.telegramPoll.isActive {
+		log.Print("there is not an active poll, cannot close it")
+		return
+	}
+	finishPoll := tgbotapi.StopPollConfig{
+		BaseEdit: tgbotapi.BaseEdit{
+			ChatID:    b.cfg.GroupId,         // The chat ID where the poll was sent
+			MessageID: b.telegramPoll.pollId, // The message ID of the poll
+		},
+	}
+	res, err := b.tgBot.StopPoll(finishPoll)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	b.clearPoll()
+	b.announceWinner(&res)
 }
 
 // announceWinner defines a winner and sends a message to the group
@@ -249,11 +257,13 @@ func (b *Bot) isAllVoted() bool {
 	return true
 }
 
-func (b *Bot) closeBookGathering() {
+// clearBookGatheringState clears a book
+func (b *Bot) clearBookGatheringState() {
 	b.bookGathering.IsStarted = false
 	b.bookGathering = &BookGathering{}
 }
 
+// msgAboutGatheringBooks sends a message about books are going to be in a poll to the group chat
 func (b *Bot) msgAboutGatheringBooks() {
 	// Ensure there are participants with books
 	if b.bookGathering == nil || len(b.bookGathering.Participants) == 0 {
@@ -293,19 +303,39 @@ func (b *Bot) msgAboutGatheringBooks() {
 	}
 }
 
-func (b *Bot) runTelegramPoll() (int, error) {
+func (b *Bot) runTelegramPollFlow() {
+	b.msgAboutGatheringBooks()
+	err := b.runTelegramPoll()
+	if err != nil {
+		log.Printf("cannot run poll: %v\n", err)
+		return
+	}
+
+	b.clearBookGatheringState()
+	b.closeTelegramPollAfterDelay(30 * time.Second)
+}
+
+// runTelegramPoll creates and starts a poll for choosing a book in the group
+func (b *Bot) runTelegramPoll() error {
+	if b.telegramPoll.isActive {
+		return errors.New("cannot run a poll as there is a still active poll")
+	}
 	books := b.extractBooks()
 	if len(books) < 2 {
-		return 0, errors.New("cannot run a poll as there is less than 2 books")
+		return errors.New("cannot run a poll as there is less than 2 books")
 	}
 	poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу", books...)
 	poll.IsAnonymous = false
 	poll.AllowsMultipleAnswers = true
 	msg, err := b.tgBot.Send(poll)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	return msg.MessageID, nil
+
+	b.telegramPoll.isActive = true
+	b.telegramPoll.pollId = msg.MessageID
+	b.telegramPoll.participants = len(b.subs)
+	return nil
 }
 
 func (b *Bot) extractBooks() []string {
@@ -335,6 +365,11 @@ func (b *Bot) getPhotoId(p *Participant) tgbotapi.FileID {
 	if p.Book.PhotoId != "" {
 		return tgbotapi.FileID(p.Book.PhotoId)
 	}
-
 	return ""
+}
+
+func (b *Bot) clearPoll() {
+	b.telegramPoll = &telegramPoll{
+		voted: make(map[int64]struct{}),
+	}
 }
