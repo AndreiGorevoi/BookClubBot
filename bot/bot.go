@@ -328,6 +328,7 @@ func (b *Bot) runTelegramPollFlow() {
 		return
 	}
 
+	b.deadlineNotificationTelegramPoll(15 * time.Second)
 	b.closeTelegramPollAfterDelay(30 * time.Second)
 }
 
@@ -403,12 +404,24 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 		if b.bookGathering.active {
 			// send a messega to all participants that have not chosen yet
 			for _, p := range b.bookGathering.Participants {
-				if p.Status != finished {
-					msg := tgbotapi.NewMessage(p.Id, "Время на выбор книги заканчивается... Успей предложить книгу. Если не хочешь предлагать книгу, напиши '/skip'. Не переживай, ты все еще сможешь выбирать книгу из предложеных другими участинками.ы")
-					b.tgBot.Send(msg)
+				if p.Status == finished {
+					continue
 				}
+				msg := tgbotapi.NewMessage(p.Id, "Время на выбор книги заканчивается... Успей предложить книгу. Если не хочешь предлагать книгу, напиши '/skip'. Не переживай, ты все еще сможешь выбирать книгу из предложеных другими участинками.ы")
+				b.tgBot.Send(msg)
 			}
 		}
+	}()
+}
+
+func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		if !b.telegramPoll.isActive {
+			return
+		}
+		msg := tgbotapi.NewMessage(b.cfg.GroupId, "Голосование закончится через n вермени.⏳")
+		b.tgBot.Send(msg)
 	}()
 }
 
