@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"slices"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -19,7 +20,7 @@ const (
 
 type BookGathering struct {
 	Participants []*Participant
-	IsStarted    bool
+	active       bool
 }
 
 type Participant struct {
@@ -36,6 +37,24 @@ type Book struct {
 	Author      string
 	Description string
 	PhotoId     string
+}
+
+func (bg *BookGathering) isParticipant(id int64) bool {
+	for _, p := range bg.Participants {
+		if p.Id == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (bg *BookGathering) removeParticipant(id int64) {
+	for i := 0; i < len(bg.Participants); i++ {
+		if bg.Participants[i].Id == id {
+			bg.Participants = slices.Delete(bg.Participants, i, i+1)
+			return
+		}
+	}
 }
 
 func (p *Participant) bookCaption() string {

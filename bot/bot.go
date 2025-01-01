@@ -58,6 +58,8 @@ func (b *Bot) Run() {
 				b.handleSubscription(&update)
 			case "/start_vote":
 				b.handleStartVote(&update)
+			case "/skip":
+				b.handleSkip(&update)
 			default:
 				b.handleUserMsg(&update)
 			}
@@ -101,20 +103,22 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 }
 
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
-	if b.bookGathering.IsStarted {
+	if b.bookGathering.active {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, "Голосование уже запущено, дождитесь окончания голосования")
 		b.tgBot.Send(msg)
 		return
-	} else {
-		b.initParticipants()
-		b.bookGathering.IsStarted = true
 	}
+
+	b.bookGathering.active = true
+	b.initParticipants()
+	b.deadlineNotificationBookGathering(30 * time.Second) // TODO: config time
+	b.runTelegramPollFlowAfterDelay(1 * time.Minute)      // TODO: config time
 }
 
 func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	var msg tgbotapi.MessageConfig
 	currentUserId := update.Message.From.ID
-	if !b.bookGathering.IsStarted {
+	if !b.bookGathering.active {
 		msg = tgbotapi.NewMessage(currentUserId, "Голосование еще не началось или уже закончилось!")
 		b.tgBot.Send(msg)
 		return
@@ -136,7 +140,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 
 	b.handleParticipantAnswer(particiapant, update)
 
-	if b.isAllVoted() {
+	if b.areAllBooksChosen() && b.bookGathering.active {
 		b.runTelegramPollFlow()
 	}
 }
@@ -182,6 +186,24 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 	}
 }
 
+func (b *Bot) handleSkip(update *tgbotapi.Update) {
+	userId := update.Message.From.ID
+	if !b.bookGathering.active {
+		msg := tgbotapi.NewMessage(userId, "Голосование еще не началось или уже закончилось!")
+		b.tgBot.Send(msg)
+		return
+	}
+	if !b.bookGathering.isParticipant(userId) {
+		msg := tgbotapi.NewMessage(userId, "Ты уже отказался предлагать книгу. Предложить книгу можно будет в следующий раз ☺︎")
+		b.tgBot.Send(msg)
+		return
+	}
+
+	b.bookGathering.removeParticipant(userId)
+	msg := tgbotapi.NewMessage(userId, "Жаль, что в этот раз ты не смог предложить книгу. ☹︎")
+	b.tgBot.Send(msg)
+}
+
 // initParticipants fills participants to the bookGathering filds by
 // converting subscribers and sends them a message with asking a name of a book
 func (b *Bot) initParticipants() {
@@ -216,6 +238,7 @@ func (b *Bot) closeTelegramPoll() {
 		log.Print("there is not an active poll, cannot close it")
 		return
 	}
+	defer b.clearPoll()
 	finishPoll := tgbotapi.StopPollConfig{
 		BaseEdit: tgbotapi.BaseEdit{
 			ChatID:    b.cfg.GroupId,         // The chat ID where the poll was sent
@@ -227,7 +250,6 @@ func (b *Bot) closeTelegramPoll() {
 		log.Print(err)
 		return
 	}
-	b.clearPoll()
 	b.announceWinner(&res)
 }
 
@@ -248,19 +270,13 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 	b.tgBot.Send(msg)
 }
 
-func (b *Bot) isAllVoted() bool {
+func (b *Bot) areAllBooksChosen() bool {
 	for _, p := range b.bookGathering.Participants {
 		if p.Status != finished {
 			return false
 		}
 	}
 	return true
-}
-
-// clearBookGatheringState clears a book
-func (b *Bot) clearBookGatheringState() {
-	b.bookGathering.IsStarted = false
-	b.bookGathering = &BookGathering{}
 }
 
 // msgAboutGatheringBooks sends a message about books are going to be in a poll to the group chat
@@ -304,6 +320,7 @@ func (b *Bot) msgAboutGatheringBooks() {
 }
 
 func (b *Bot) runTelegramPollFlow() {
+	defer b.clearBookGatheringState()
 	b.msgAboutGatheringBooks()
 	err := b.runTelegramPoll()
 	if err != nil {
@@ -311,7 +328,6 @@ func (b *Bot) runTelegramPollFlow() {
 		return
 	}
 
-	b.clearBookGatheringState()
 	b.closeTelegramPollAfterDelay(30 * time.Second)
 }
 
@@ -324,7 +340,7 @@ func (b *Bot) runTelegramPoll() error {
 	if len(books) < 2 {
 		return errors.New("cannot run a poll as there is less than 2 books")
 	}
-	poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу", books...)
+	poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу. Выбрать можно не больше 2 книг!", books...)
 	poll.IsAnonymous = false
 	poll.AllowsMultipleAnswers = true
 	msg, err := b.tgBot.Send(poll)
@@ -372,4 +388,34 @@ func (b *Bot) clearPoll() {
 	b.telegramPoll = &telegramPoll{
 		voted: make(map[int64]struct{}),
 	}
+}
+
+// clearBookGatheringState clears a book
+func (b *Bot) clearBookGatheringState() {
+	b.bookGathering.active = false
+	b.bookGathering = &BookGathering{}
+}
+
+func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		if b.bookGathering.active {
+			// send a messega to all participants that have not chosen yet
+			for _, p := range b.bookGathering.Participants {
+				if p.Status != finished {
+					msg := tgbotapi.NewMessage(p.Id, "Время на выбор книги заканчивается... Успей предложить книгу. Если не хочешь предлагать книгу, напиши '/skip'. Не переживай, ты все еще сможешь выбирать книгу из предложеных другими участинками.ы")
+					b.tgBot.Send(msg)
+				}
+			}
+		}
+	}()
+}
+
+func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		if b.bookGathering.active {
+			b.runTelegramPollFlow()
+		}
+	}()
 }
