@@ -14,9 +14,12 @@ const confFolder = "./config"
 
 type AppConfig struct {
 	GroupId               int64
-	TimeForGatheringBooks int `json:"time_for_gathering_books"`
-	TimeForTelegramPoll   int `json:"time_for_telegram_poll"`
-	TKey                  string
+	TimeToGatherBooks     int `json:"time_to_gather_books"`    // seconds
+	NotifyBeforeGathering int `json:"notify_before_gathering"` // seconds
+	TimeForTelegramPoll   int `json:"time_for_telegram_poll"`  // seconds
+	NotifyBeforePoll      int `json:"notify_before_poll"`      //seconds
+
+	TKey string
 }
 
 func LoadConfig() (*AppConfig, error) {

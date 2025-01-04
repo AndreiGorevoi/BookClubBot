@@ -1,4 +1,6 @@
 {
-  "time_for_gathering_books": 86400,
-  "time_for_telegram_poll": 86400
+  "time_to_gather_books": 86400,
+  "notify_before_gathering": 43200,
+  "time_for_telegram_poll": 86400,
+  "notify_before_poll": 43200
 }

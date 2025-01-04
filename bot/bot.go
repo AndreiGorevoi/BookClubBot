@@ -111,8 +111,8 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) {
 
 	b.bookGathering.active = true
 	b.initParticipants()
-	b.deadlineNotificationBookGathering(30 * time.Second) // TODO: config time
-	b.runTelegramPollFlowAfterDelay(1 * time.Minute)      // TODO: config time
+	b.deadlineNotificationBookGathering(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second)
+	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
 }
 
 func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
@@ -224,44 +224,15 @@ func (b *Bot) initParticipants() {
 	b.bookGathering.Participants = participants
 }
 
-// closePollAfterDelay runs a gourotine that stops a poll after a given delay
-func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		b.closeTelegramPoll()
-	}()
-}
-
-// closeTelegramPoll stops a poll and anounce the winner
-func (b *Bot) closeTelegramPoll() {
-	if !b.telegramPoll.isActive {
-		log.Print("there is not an active poll, cannot close it")
-		return
-	}
-	defer b.clearPoll()
-	finishPoll := tgbotapi.StopPollConfig{
-		BaseEdit: tgbotapi.BaseEdit{
-			ChatID:    b.cfg.GroupId,         // The chat ID where the poll was sent
-			MessageID: b.telegramPoll.pollId, // The message ID of the poll
-		},
-	}
-	res, err := b.tgBot.StopPoll(finishPoll)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	b.announceWinner(&res)
-}
-
 // announceWinner defines a winner and sends a message to the group
 func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 	winners := defineWinners(poll)
 	var txt string
 	switch len(winners) {
 	case 0:
-		txt = fmt.Sprint("Что-то пошло не так, не удалось определить победителя :(")
+		txt = fmt.Sprint("Что-то пошло не так, не удалось определить победителя :(\n")
 	case 1:
-		txt = fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'", winners[0])
+		txt = fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'\n", winners[0])
 	default:
 		txt = fmt.Sprintf("К сожаление выявить одного победителя не удалось! Так как Андрей очень ленивый и слабый программист, он не смог написать для меня логику, чтобы запустить еще одно голосование... Вам придется самостоятеьно запустить голосование и выбрать победителя из этих книг: %s\n", strings.Join(winners, ","))
 	}
@@ -319,8 +290,18 @@ func (b *Bot) msgAboutGatheringBooks() {
 	}
 }
 
+func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		if b.bookGathering.active {
+			b.runTelegramPollFlow()
+		}
+	}()
+}
+
+// runTelegramPollFlow stops a book gathering and runs a telegram poll
 func (b *Bot) runTelegramPollFlow() {
-	defer b.clearBookGatheringState()
+	defer b.stopBookGathering()
 	b.msgAboutGatheringBooks()
 	err := b.runTelegramPoll()
 	if err != nil {
@@ -328,8 +309,8 @@ func (b *Bot) runTelegramPollFlow() {
 		return
 	}
 
-	b.deadlineNotificationTelegramPoll(15 * time.Second)
-	b.closeTelegramPollAfterDelay(30 * time.Second)
+	b.deadlineNotificationTelegramPoll(time.Duration(b.cfg.TimeForTelegramPoll-b.cfg.NotifyBeforePoll) * time.Second)
+	b.closeTelegramPollAfterDelay(time.Duration(b.cfg.TimeForTelegramPoll) * time.Second)
 }
 
 // runTelegramPoll creates and starts a poll for choosing a book in the group
@@ -355,6 +336,35 @@ func (b *Bot) runTelegramPoll() error {
 	return nil
 }
 
+// closePollAfterDelay runs a gourotine that stops a poll after a given delay
+func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		b.closeTelegramPoll()
+	}()
+}
+
+// closeTelegramPoll stops a poll and anounce the winner
+func (b *Bot) closeTelegramPoll() {
+	if !b.telegramPoll.isActive {
+		log.Print("there is not an active poll, cannot close it")
+		return
+	}
+	defer b.clearPoll()
+	finishPoll := tgbotapi.StopPollConfig{
+		BaseEdit: tgbotapi.BaseEdit{
+			ChatID:    b.cfg.GroupId,         // The chat ID where the poll was sent
+			MessageID: b.telegramPoll.pollId, // The message ID of the poll
+		},
+	}
+	res, err := b.tgBot.StopPoll(finishPoll)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	b.announceWinner(&res)
+}
+
 func (b *Bot) extractBooks() []string {
 	books := make([]string, 0, len(b.bookGathering.Participants))
 	books = append(books, "Книга: Властелин Колец. Автор: Джон Роуэл Толкин")
@@ -363,7 +373,7 @@ func (b *Bot) extractBooks() []string {
 		if p.Book == nil {
 			continue
 		}
-		name := fmt.Sprintf("Книга: %s. Автор: %s", p.Book.Title, p.Book.Author)
+		name := fmt.Sprintf("Книга: %s. Автор: %s\n", p.Book.Title, p.Book.Author)
 		books = append(books, name)
 	}
 	return books
@@ -392,8 +402,8 @@ func (b *Bot) clearPoll() {
 	}
 }
 
-// clearBookGatheringState clears a book
-func (b *Bot) clearBookGatheringState() {
+// stopBookGathering stops a book gathering and clreas a bookGathering state
+func (b *Bot) stopBookGathering() {
 	b.bookGathering.active = false
 	b.bookGathering = &BookGathering{}
 }
@@ -407,7 +417,8 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 				if p.Status == finished {
 					continue
 				}
-				msg := tgbotapi.NewMessage(p.Id, "Время на выбор книги заканчивается... Успей предложить книгу. Если не хочешь предлагать книгу, напиши '/skip'. Не переживай, ты все еще сможешь выбирать книгу из предложеных другими участинками.ы")
+				txt := fmt.Sprintf("Сбор книг закончится через - %f часов... Успей предложить книгу. Если не хочешь предлагать книгу, напиши '/skip'. Не переживай, ты все еще сможешь выбирать книгу из предложеных другими участинками.ы\n", (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
+				msg := tgbotapi.NewMessage(p.Id, txt)
 				b.tgBot.Send(msg)
 			}
 		}
@@ -420,16 +431,8 @@ func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 		if !b.telegramPoll.isActive {
 			return
 		}
-		msg := tgbotapi.NewMessage(b.cfg.GroupId, "Голосование закончится через n вермени.⏳")
+		txt := fmt.Sprintf("Голосование закончится через %f часов.⏳", (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
+		msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
 		b.tgBot.Send(msg)
-	}()
-}
-
-func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		if b.bookGathering.active {
-			b.runTelegramPollFlow()
-		}
 	}()
 }

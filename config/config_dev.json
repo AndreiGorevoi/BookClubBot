@@ -1,4 +1,6 @@
 {
-  "time_for_gathering_books": 60,
-  "time_for_telegram_poll": 60
+  "time_to_gather_books": 60,
+  "notify_before_gathering": 30,
+  "time_for_telegram_poll": 60,
+  "notify_before_poll": 30
 }
