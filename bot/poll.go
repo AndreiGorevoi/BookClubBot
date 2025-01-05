@@ -18,57 +18,57 @@ const (
 	defaultImagePath = "assets/book-with-question-mark.jpg"
 )
 
-type BookGathering struct {
-	Participants []*Participant
+type bookGathering struct {
+	participants []*participant
 	active       bool
 }
 
-type Participant struct {
-	Id        int64
-	FirstName string
-	LastName  string
-	Nick      string
-	Status    int
-	Book      *Book
+type participant struct {
+	id        int64
+	firstName string
+	lastName  string
+	nick      string
+	status    int
+	book      *book
 }
 
-type Book struct {
-	Title       string
-	Author      string
-	Description string
-	PhotoId     string
+type book struct {
+	title       string
+	author      string
+	description string
+	photoId     string
 }
 
-func (bg *BookGathering) isParticipant(id int64) bool {
-	for _, p := range bg.Participants {
-		if p.Id == id {
+func (bg *bookGathering) isParticipant(id int64) bool {
+	for _, p := range bg.participants {
+		if p.id == id {
 			return true
 		}
 	}
 	return false
 }
 
-func (bg *BookGathering) removeParticipant(id int64) {
-	for i := 0; i < len(bg.Participants); i++ {
-		if bg.Participants[i].Id == id {
-			bg.Participants = slices.Delete(bg.Participants, i, i+1)
+func (bg *bookGathering) removeParticipant(id int64) {
+	for i := 0; i < len(bg.participants); i++ {
+		if bg.participants[i].id == id {
+			bg.participants = slices.Delete(bg.participants, i, i+1)
 			return
 		}
 	}
 }
 
-func (p *Participant) bookCaption() string {
+func (p *participant) bookCaption() string {
 	return fmt.Sprintf(
 		"📚 *Название*: %s\n👤 *Автор*: %s\n📝 *Описание*: %s",
-		p.Book.Title,
-		p.Book.Author,
-		p.Book.Description,
+		p.book.title,
+		p.book.author,
+		p.book.description,
 	)
 }
 
-func (p *Participant) bookImage() tgbotapi.InputMediaPhoto {
-	if p.Book.PhotoId != "" {
-		return tgbotapi.NewInputMediaPhoto(tgbotapi.FileID(p.Book.PhotoId))
+func (p *participant) bookImage() tgbotapi.InputMediaPhoto {
+	if p.book.photoId != "" {
+		return tgbotapi.NewInputMediaPhoto(tgbotapi.FileID(p.book.photoId))
 	}
 	return tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(defaultImagePath))
 }

@@ -15,7 +15,7 @@ import (
 type Bot struct {
 	cfg           *config.AppConfig
 	tgBot         *tgbotapi.BotAPI
-	bookGathering *BookGathering
+	bookGathering *bookGathering
 	subs          []Subscriber
 	telegramPoll  *telegramPoll
 	messages      *message.LocalizedMessages
@@ -24,7 +24,7 @@ type Bot struct {
 func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages) *Bot {
 	return &Bot{
 		cfg:           cfg,
-		bookGathering: &BookGathering{},
+		bookGathering: &bookGathering{},
 		telegramPoll: &telegramPoll{
 			voted: make(map[int64]struct{}),
 		},
@@ -127,10 +127,10 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 		return
 	}
 
-	var particiapant *Participant
+	var particiapant *participant
 	// check whether the particiapant is a participant of a poll
-	for _, p := range b.bookGathering.Participants {
-		if p.Id == currentUserId {
+	for _, p := range b.bookGathering.participants {
+		if p.id == currentUserId {
 			particiapant = p
 			break
 		}
@@ -148,32 +148,32 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	}
 }
 
-func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
-	switch p.Status {
+func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
+	switch p.status {
 	case bookAsked:
-		book := update.Message.Text
-		p.Book = &Book{
-			Title: book,
+		bookTitle := update.Message.Text
+		p.book = &book{
+			title: bookTitle,
 		}
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
 		b.tgBot.Send(msg)
-		p.Status = authorAsked
+		p.status = authorAsked
 	case authorAsked:
 		author := update.Message.Text
-		p.Book.Author = author
+		p.book.author = author
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WriteBookDescription)
 		b.tgBot.Send(msg)
-		p.Status = descriptionAsked
+		p.status = descriptionAsked
 	case descriptionAsked:
 		desc := update.Message.Text
-		p.Book.Description = desc
+		p.book.description = desc
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AttachCoverPhoto)
 		b.tgBot.Send(msg)
-		p.Status = imageAsked
+		p.status = imageAsked
 	case imageAsked:
 		if update.Message.Photo != nil {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
-			p.Book.PhotoId = photo.FileID
+			p.book.photoId = photo.FileID
 
 			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.BookAddedToNextVoting)
 			b.tgBot.Send(msg)
@@ -182,7 +182,7 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.ImageMissingBookAdded)
 			b.tgBot.Send(msg)
 		}
-		p.Status = finished
+		p.status = finished
 	case finished:
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
 		b.tgBot.Send(msg)
@@ -210,21 +210,21 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 // initParticipants fills participants to the bookGathering filds by
 // converting subscribers and sends them a message with asking a name of a book
 func (b *Bot) initParticipants() {
-	participants := make([]*Participant, 0, len(b.subs))
+	participants := make([]*participant, 0, len(b.subs))
 	for _, sub := range b.subs {
 		msg := tgbotapi.NewMessage(sub.Id, b.messages.PleaseSuggestBookTitle)
 		b.tgBot.Send(msg)
-		p := &Participant{
-			Id:        sub.Id,
-			FirstName: sub.FirstName,
-			LastName:  sub.LastName,
-			Nick:      sub.Nick,
-			Status:    bookAsked,
+		p := &participant{
+			id:        sub.Id,
+			firstName: sub.FirstName,
+			lastName:  sub.LastName,
+			nick:      sub.Nick,
+			status:    bookAsked,
 		}
 
 		participants = append(participants, p)
 	}
-	b.bookGathering.Participants = participants
+	b.bookGathering.participants = participants
 }
 
 // announceWinner defines a winner and sends a message to the group
@@ -245,8 +245,8 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 }
 
 func (b *Bot) areAllBooksChosen() bool {
-	for _, p := range b.bookGathering.Participants {
-		if p.Status != finished {
+	for _, p := range b.bookGathering.participants {
+		if p.status != finished {
 			return false
 		}
 	}
@@ -256,16 +256,16 @@ func (b *Bot) areAllBooksChosen() bool {
 // msgAboutGatheringBooks sends a message about books are going to be in a poll to the group chat
 func (b *Bot) msgAboutGatheringBooks() {
 	// Ensure there are participants with books
-	if b.bookGathering == nil || len(b.bookGathering.Participants) == 0 {
+	if b.bookGathering == nil || len(b.bookGathering.participants) == 0 {
 		log.Println("No participants or books found.")
 		return
 	}
 
 	var mediaGroup []interface{}
 
-	for _, participant := range b.bookGathering.Participants {
+	for _, participant := range b.bookGathering.participants {
 		// Check if the participant has suggested a book
-		if participant.Book == nil {
+		if participant.book == nil {
 			continue
 		}
 
@@ -371,14 +371,14 @@ func (b *Bot) closeTelegramPoll() {
 }
 
 func (b *Bot) extractBooks() []string {
-	books := make([]string, 0, len(b.bookGathering.Participants))
+	books := make([]string, 0, len(b.bookGathering.participants))
 	books = append(books, "Книга: Властелин Колец. Автор: Джон Роуэл Толкин")
 
-	for _, p := range b.bookGathering.Participants {
-		if p.Book == nil {
+	for _, p := range b.bookGathering.participants {
+		if p.book == nil {
 			continue
 		}
-		name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.Book.Title, b.messages.AuthorLabel, p.Book.Author)
+		name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.book.title, b.messages.AuthorLabel, p.book.author)
 		books = append(books, name)
 	}
 	return books
@@ -393,9 +393,9 @@ func (b *Bot) isAlreadySub(userId int64) bool {
 	return false
 }
 
-func (b *Bot) getPhotoId(p *Participant) tgbotapi.FileID {
-	if p.Book.PhotoId != "" {
-		return tgbotapi.FileID(p.Book.PhotoId)
+func (b *Bot) getPhotoId(p *participant) tgbotapi.FileID {
+	if p.book.photoId != "" {
+		return tgbotapi.FileID(p.book.photoId)
 	}
 	return ""
 }
@@ -410,7 +410,7 @@ func (b *Bot) clearPoll() {
 // stopBookGathering stops a book gathering and clreas a bookGathering state
 func (b *Bot) stopBookGathering() {
 	b.bookGathering.active = false
-	b.bookGathering = &BookGathering{}
+	b.bookGathering = &bookGathering{}
 }
 
 func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
@@ -418,13 +418,13 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 		time.Sleep(delay)
 		if b.bookGathering.active {
 			// send a messega to all participants that have not chosen yet
-			for _, p := range b.bookGathering.Participants {
-				if p.Status == finished {
+			for _, p := range b.bookGathering.participants {
+				if p.status == finished {
 					continue
 				}
 				//TODO: think about format (handle days, hours, minutes etc. depends on how much time left)
 				txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
-				msg := tgbotapi.NewMessage(p.Id, txt)
+				msg := tgbotapi.NewMessage(p.id, txt)
 				b.tgBot.Send(msg)
 			}
 		}
