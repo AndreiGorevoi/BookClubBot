@@ -32,6 +32,7 @@ func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages) *Bot {
 	}
 }
 
+// Run stars telegram bot on using provided API key from a config
 func (b *Bot) Run() {
 	var err error
 	b.tgBot, err = tgbotapi.NewBotAPI(b.cfg.TKey)
@@ -105,6 +106,7 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 	b.tgBot.Send(msg)
 }
 
+// handleStartVote handles a starting a book gathering from subcribers
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
 	if b.bookGathering.active {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
@@ -118,6 +120,7 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) {
 	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
 }
 
+// handleUserMsg handles any message from a user
 func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	var msg tgbotapi.MessageConfig
 	currentUserId := update.Message.From.ID
@@ -148,6 +151,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	}
 }
 
+// handleParticipantAnswer handles an answer from a particiapant during a book gathering
 func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 	switch p.status {
 	case bookAsked:
@@ -189,6 +193,7 @@ func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 	}
 }
 
+// handleSkip handles a '/skip' message from a user due remove them from an ongoing book gathering
 func (b *Bot) handleSkip(update *tgbotapi.Update) {
 	userId := update.Message.From.ID
 	if !b.bookGathering.active {
@@ -293,6 +298,7 @@ func (b *Bot) msgAboutGatheringBooks() {
 	}
 }
 
+// runTelegramPollFlowAfterDelay runs a runTelegramPollFlow but with delay in a separate goroutine
 func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
@@ -370,6 +376,7 @@ func (b *Bot) closeTelegramPoll() {
 	b.announceWinner(&res)
 }
 
+// extractBooks gains a slice of string from a books that participants suggested
 func (b *Bot) extractBooks() []string {
 	books := make([]string, 0, len(b.bookGathering.participants))
 	books = append(books, "Книга: Властелин Колец. Автор: Джон Роуэл Толкин")
@@ -384,6 +391,7 @@ func (b *Bot) extractBooks() []string {
 	return books
 }
 
+// isAlreadySub weather a given userId alredy subscribe to the bot
 func (b *Bot) isAlreadySub(userId int64) bool {
 	for _, s := range b.subs {
 		if s.Id == userId {
@@ -393,6 +401,7 @@ func (b *Bot) isAlreadySub(userId int64) bool {
 	return false
 }
 
+// getPhotoId returns a tgbotapi.FileID from a participant
 func (b *Bot) getPhotoId(p *participant) tgbotapi.FileID {
 	if p.book.photoId != "" {
 		return tgbotapi.FileID(p.book.photoId)
@@ -413,6 +422,8 @@ func (b *Bot) stopBookGathering() {
 	b.bookGathering = &bookGathering{}
 }
 
+// deadlineNotificationBookGathering run a separate goroutine that notifies users about a deadline
+// of a book gathering. Delay is taken from a config
 func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
@@ -431,6 +442,8 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 	}()
 }
 
+// deadlineNotificationTelegramPoll run a separate goroutine that notifies users about a deadline
+// of a telegram poll. Delay is taken from a config
 func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
