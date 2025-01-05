@@ -2,6 +2,7 @@ package bot
 
 import (
 	"BookClubBot/config"
+	"BookClubBot/message"
 	"errors"
 	"fmt"
 	"log"
@@ -17,15 +18,17 @@ type Bot struct {
 	bookGathering *BookGathering
 	subs          []Subscriber
 	telegramPoll  *telegramPoll
+	messages      *message.LocalizedMessages
 }
 
-func NewBot(cfg *config.AppConfig) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &BookGathering{},
 		telegramPoll: &telegramPoll{
 			voted: make(map[int64]struct{}),
 		},
+		messages: messages,
 	}
 }
 
@@ -85,7 +88,7 @@ func (b *Bot) Run() {
 func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 	// reject subscription if a user is subscribed already
 	if b.isAlreadySub(update.Message.From.ID) {
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже подписан. Осталось дождаться голосования.")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AlreadySubscribedWaitForVoting)
 		b.tgBot.Send(msg)
 		return
 	}
@@ -98,13 +101,13 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 	}
 	b.subs = append(b.subs, newSub)
 	persistSubs(b.subs)
-	msg := tgbotapi.NewMessage(update.Message.From.ID, "Добро пожаловать в наш книжный клуб! Когда начнется следующее голосование за книгу, я приду к тебе за твоим вариантом :)")
+	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WelcomeBookClubNextVoting)
 	b.tgBot.Send(msg)
 }
 
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
 	if b.bookGathering.active {
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Голосование уже запущено, дождитесь окончания голосования")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
 		b.tgBot.Send(msg)
 		return
 	}
@@ -119,7 +122,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	var msg tgbotapi.MessageConfig
 	currentUserId := update.Message.From.ID
 	if !b.bookGathering.active {
-		msg = tgbotapi.NewMessage(currentUserId, "Голосование еще не началось или уже закончилось!")
+		msg = tgbotapi.NewMessage(currentUserId, b.messages.VotingNotStartedOrEnded)
 		b.tgBot.Send(msg)
 		return
 	}
@@ -133,7 +136,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 		}
 	}
 	if particiapant == nil {
-		msg = tgbotapi.NewMessage(currentUserId, "Похоже ты не участник текущего голосования")
+		msg = tgbotapi.NewMessage(currentUserId, b.messages.NotParticipantCurrentVoting)
 		b.tgBot.Send(msg)
 		return
 	}
@@ -152,19 +155,19 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 		p.Book = &Book{
 			Title: book,
 		}
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Кто автор этой книги?")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
 		b.tgBot.Send(msg)
 		p.Status = authorAsked
 	case authorAsked:
 		author := update.Message.Text
 		p.Book.Author = author
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Напиши краткое описание книги.")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WriteBookDescription)
 		b.tgBot.Send(msg)
 		p.Status = descriptionAsked
 	case descriptionAsked:
 		desc := update.Message.Text
 		p.Book.Description = desc
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Прикрепи фотографию обложки. Использована будет только одна картинка.")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AttachCoverPhoto)
 		b.tgBot.Send(msg)
 		p.Status = imageAsked
 	case imageAsked:
@@ -172,16 +175,16 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
 			p.Book.PhotoId = photo.FileID
 
-			msg := tgbotapi.NewMessage(update.Message.From.ID, "Готово! Я добавил твое книгу в следующее голосование.")
+			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.BookAddedToNextVoting)
 			b.tgBot.Send(msg)
 		} else {
 			// If no photo is provided, skip to the next step
-			msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты пропустил изображение. Я добавил твою книгу в следующее голосование.")
+			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.ImageMissingBookAdded)
 			b.tgBot.Send(msg)
 		}
 		p.Status = finished
 	case finished:
-		msg := tgbotapi.NewMessage(update.Message.From.ID, "Ты уже закончил голосование!")
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
 		b.tgBot.Send(msg)
 	}
 }
@@ -189,18 +192,18 @@ func (b *Bot) handleParticipantAnswer(p *Participant, update *tgbotapi.Update) {
 func (b *Bot) handleSkip(update *tgbotapi.Update) {
 	userId := update.Message.From.ID
 	if !b.bookGathering.active {
-		msg := tgbotapi.NewMessage(userId, "Голосование еще не началось или уже закончилось!")
+		msg := tgbotapi.NewMessage(userId, b.messages.VotingNotStartedOrEnded)
 		b.tgBot.Send(msg)
 		return
 	}
 	if !b.bookGathering.isParticipant(userId) {
-		msg := tgbotapi.NewMessage(userId, "Ты уже отказался предлагать книгу. Предложить книгу можно будет в следующий раз ☺︎")
+		msg := tgbotapi.NewMessage(userId, b.messages.AlreadyDeclinedSuggestion)
 		b.tgBot.Send(msg)
 		return
 	}
 
 	b.bookGathering.removeParticipant(userId)
-	msg := tgbotapi.NewMessage(userId, "Жаль, что в этот раз ты не смог предложить книгу. ☹︎")
+	msg := tgbotapi.NewMessage(userId, b.messages.UnableToSuggestBook)
 	b.tgBot.Send(msg)
 }
 
@@ -209,7 +212,7 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 func (b *Bot) initParticipants() {
 	participants := make([]*Participant, 0, len(b.subs))
 	for _, sub := range b.subs {
-		msg := tgbotapi.NewMessage(sub.Id, "Пожалуйста, предложи название книги:")
+		msg := tgbotapi.NewMessage(sub.Id, b.messages.PleaseSuggestBookTitle)
 		b.tgBot.Send(msg)
 		p := &Participant{
 			Id:        sub.Id,
@@ -230,11 +233,11 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 	var txt string
 	switch len(winners) {
 	case 0:
-		txt = fmt.Sprint("Что-то пошло не так, не удалось определить победителя :(\n")
+		txt = b.messages.ErrorDeterminingWinner
 	case 1:
-		txt = fmt.Sprintf("И у нас есть побелитель! Книгу которую мы будем читать - '%s'\n", winners[0])
+		txt = fmt.Sprintf("%s - '%s'\n", b.messages.WeHaveAWinner, winners[0])
 	default:
-		txt = fmt.Sprintf("К сожаление выявить одного победителя не удалось! Так как Андрей очень ленивый и слабый программист, он не смог написать для меня логику, чтобы запустить еще одно голосование... Вам придется самостоятеьно запустить голосование и выбрать победителя из этих книг: %s\n", strings.Join(winners, ","))
+		txt = fmt.Sprintf("%s: %s\n", b.messages.NoClearWinnerManualVoting, strings.Join(winners, ","))
 	}
 
 	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
@@ -322,7 +325,9 @@ func (b *Bot) runTelegramPoll() error {
 	if len(books) < 2 {
 		return errors.New("cannot run a poll as there is less than 2 books")
 	}
-	poll := tgbotapi.NewPoll(b.cfg.GroupId, "Выбираем книгу. Выбрать можно не больше 2 книг!", books...)
+	votingEnds := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.TimeForTelegramPoll) * time.Second).Hours())
+	txt := fmt.Sprintf("%s.%s", b.messages.ChooseUpToTwoBooks, votingEnds)
+	poll := tgbotapi.NewPoll(b.cfg.GroupId, txt, books...)
 	poll.IsAnonymous = false
 	poll.AllowsMultipleAnswers = true
 	msg, err := b.tgBot.Send(poll)
@@ -373,7 +378,7 @@ func (b *Bot) extractBooks() []string {
 		if p.Book == nil {
 			continue
 		}
-		name := fmt.Sprintf("Книга: %s. Автор: %s\n", p.Book.Title, p.Book.Author)
+		name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.Book.Title, b.messages.AuthorLabel, p.Book.Author)
 		books = append(books, name)
 	}
 	return books
@@ -417,7 +422,8 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 				if p.Status == finished {
 					continue
 				}
-				txt := fmt.Sprintf("Сбор книг закончится через - %f часов... Успей предложить книгу. Если не хочешь предлагать книгу, напиши '/skip'. Не переживай, ты все еще сможешь выбирать книгу из предложеных другими участинками.ы\n", (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
+				//TODO: think about format (handle days, hours, minutes etc. depends on how much time left)
+				txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
 				msg := tgbotapi.NewMessage(p.Id, txt)
 				b.tgBot.Send(msg)
 			}
@@ -431,7 +437,7 @@ func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 		if !b.telegramPoll.isActive {
 			return
 		}
-		txt := fmt.Sprintf("Голосование закончится через %f часов.⏳", (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
+		txt := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
 		msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
 		b.tgBot.Send(msg)
 	}()

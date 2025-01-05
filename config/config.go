@@ -10,7 +10,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const confFolder = "./config"
+const folder = "./config"
 
 type AppConfig struct {
 	GroupId               int64
@@ -52,18 +52,13 @@ func determineEnv() string {
 }
 
 func readConfigFile(env string) (*AppConfig, error) {
-	fileName := fmt.Sprintf("%s/config_%s.json", confFolder, env)
+	fileName := fmt.Sprintf("%s/config_%s.json", folder, env)
 	f, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	cfg, err := parsreAppConfig(f)
-	if err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
+	return parsreAppConfig(f)
 }
 
 func parsreAppConfig(r io.Reader) (*AppConfig, error) {
@@ -79,6 +74,5 @@ func parsreAppConfig(r io.Reader) (*AppConfig, error) {
 		return nil, err
 	}
 
-	fmt.Println("APP CONFIG:", res)
 	return &res, nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"BookClubBot/bot"
 	"BookClubBot/config"
+	"BookClubBot/message"
 	"log"
 )
 
@@ -12,6 +13,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	b := bot.NewBot(cfg)
+	msg, err := message.LoadMessaged()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	b := bot.NewBot(cfg, msg)
 	b.Run()
 }
