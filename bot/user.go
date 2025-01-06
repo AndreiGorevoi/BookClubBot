@@ -8,7 +8,11 @@ import (
 	"sync"
 )
 
-const DBPath = "./db/db.json"
+const (
+	dbName     = "db.json"
+	folderPath = "./db"
+	dbFullPath = "./db/db.json"
+)
 
 var mu sync.Mutex
 
@@ -22,7 +26,11 @@ type Subscriber struct {
 func persistSubs(subs []Subscriber) error {
 	mu.Lock()
 	defer mu.Unlock()
-	f, err := os.Create(DBPath)
+	err := os.MkdirAll(folderPath, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(dbFullPath)
 	if err != nil {
 		return err
 	}
@@ -40,16 +48,16 @@ func persistSubs(subs []Subscriber) error {
 
 func loadSubs() []Subscriber {
 	res := make([]Subscriber, 0)
-	f, err := os.Open(DBPath)
+	f, err := os.Open(dbFullPath)
 	if err != nil {
-		log.Printf("cannot open dbpath: %s\n", DBPath)
+		log.Printf("cannot open dbpath: %s\n", dbFullPath)
 		return res
 	}
 	defer f.Close()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
-		log.Printf("cannot read from dbpath: %s\n", DBPath)
+		log.Printf("cannot read from dbpath: %s\n", dbFullPath)
 		return res
 	}
 
@@ -59,7 +67,7 @@ func loadSubs() []Subscriber {
 
 	err = json.Unmarshal(data, &res)
 	if err != nil {
-		log.Printf("cannot unmarshal data from dbpath: %s\n", DBPath)
+		log.Printf("cannot unmarshal data from dbpath: %s\n", dbFullPath)
 	}
 	return res
 }

@@ -101,7 +101,10 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 		LastName:  update.Message.From.LastName,
 	}
 	b.subs = append(b.subs, newSub)
-	persistSubs(b.subs)
+	err := persistSubs(b.subs)
+	if err != nil {
+		log.Println(err)
+	}
 	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WelcomeBookClubNextVoting)
 	b.tgBot.Send(msg)
 }
