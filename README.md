@@ -13,8 +13,8 @@ Telegram Poll Bot is a Go-based bot designed to facilitate book club meetings by
 ## Prerequisites
 
 - Go 1.18 or higher
-- Telegram Bot API Key (create a bot using [BotFather](https://core.telegram.org/bots#botfather))
-- A configured Telegram group to use the bot
+- Telegram Bot API Key - **Must be placed as telegrammApiKey env variable** (create a bot using [BotFather](https://core.telegram.org/bots#botfather))
+- A configured Telegram group to use the bot - **Must be places as groupId env variable**
 
 ## Installation
 
@@ -33,8 +33,6 @@ Telegram Poll Bot is a Go-based bot designed to facilitate book club meetings by
    - Create a `config.json` file in the `config` directory with the following structure:
      ```json
      {
-       "TKey": "your-telegram-api-key",
-       "GroupId": "your-telegram-group-id",
        "TimeToGatherBooks": 3600,
        "NotifyBeforeGathering": 300,
        "TimeForTelegramPoll": 1800,
