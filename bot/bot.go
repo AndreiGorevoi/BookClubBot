@@ -41,10 +41,10 @@ func (b *Bot) Run() {
 		log.Fatal(err)
 	}
 
-	b.tgBot.Debug = true
+	b.tgBot.Debug = b.cfg.DebugMode
 
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+	u.Timeout = b.cfg.LongPollingTimeout
 
 	updates := b.tgBot.GetUpdatesChan(u)
 

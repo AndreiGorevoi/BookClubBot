@@ -2,5 +2,7 @@
   "time_to_gather_books": 60,
   "notify_before_gathering": 30,
   "time_for_telegram_poll": 60,
-  "notify_before_poll": 30
+  "notify_before_poll": 30,
+  "debug_mode": true,
+  "long_polling_timeout": 60
 }
