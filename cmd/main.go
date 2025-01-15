@@ -4,7 +4,10 @@ import (
 	"BookClubBot/bot"
 	"BookClubBot/config"
 	"BookClubBot/message"
+	"BookClubBot/repository"
 	"log"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func main() {
@@ -18,6 +21,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	b := bot.NewBot(cfg, msg)
+	db, err := repository.InitDB("./db/book_club_bot.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	subRepository := repository.NewSubscriberRepository(db)
+
+	b := bot.NewBot(cfg, msg, subRepository)
 	b.Run()
 }

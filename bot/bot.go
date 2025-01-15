@@ -3,6 +3,7 @@ package bot
 import (
 	"BookClubBot/config"
 	"BookClubBot/message"
+	"BookClubBot/repository"
 	"errors"
 	"fmt"
 	"log"
@@ -16,19 +17,20 @@ type Bot struct {
 	cfg           *config.AppConfig
 	tgBot         *tgbotapi.BotAPI
 	bookGathering *bookGathering
-	subs          []Subscriber
 	telegramPoll  *telegramPoll
 	messages      *message.LocalizedMessages
+	subRepository *repository.SubscriberRepository
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &bookGathering{},
 		telegramPoll: &telegramPoll{
 			voted: make(map[int64]struct{}),
 		},
-		messages: messages,
+		messages:      messages,
+		subRepository: subRepository,
 	}
 }
 
@@ -47,8 +49,6 @@ func (b *Bot) Run() {
 	u.Timeout = b.cfg.LongPollingTimeout
 
 	updates := b.tgBot.GetUpdatesChan(u)
-
-	b.subs = loadSubs()
 
 	for update := range updates {
 		if update.Message != nil {
@@ -87,23 +87,20 @@ func (b *Bot) Run() {
 // handleSubscription handles /subscribe command from a user that adds them to subs
 // if they are not subscribed yet
 func (b *Bot) handleSubscription(update *tgbotapi.Update) {
-	// reject subscription if a user is subscribed already
-	if b.isAlreadySub(update.Message.From.ID) {
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AlreadySubscribedWaitForVoting)
-		b.tgBot.Send(msg)
-		return
-	}
-
-	newSub := Subscriber{
+	newSub := repository.Subscriber{
 		Id:        update.Message.From.ID,
 		Nick:      update.Message.From.UserName,
 		FirstName: update.Message.From.FirstName,
 		LastName:  update.Message.From.LastName,
 	}
-	b.subs = append(b.subs, newSub)
-	err := persistSubs(b.subs)
-	if err != nil {
+	err := b.subRepository.AddSubscriber(newSub)
+	if errors.Is(err, repository.ErrUserAlreadySubscribed) {
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AlreadySubscribedWaitForVoting)
+		b.tgBot.Send(msg)
+		return
+	} else if err != nil {
 		log.Println(err)
+		return
 	}
 	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WelcomeBookClubNextVoting)
 	b.tgBot.Send(msg)
@@ -118,7 +115,11 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) {
 	}
 
 	b.bookGathering.active = true
-	b.initParticipants()
+	err := b.initParticipants()
+	if err != nil {
+		log.Println(err)
+		return
+	}
 	b.deadlineNotificationBookGathering(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second)
 	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
 }
@@ -217,9 +218,13 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 
 // initParticipants fills participants to the bookGathering filds by
 // converting subscribers and sends them a message with asking a name of a book
-func (b *Bot) initParticipants() {
-	participants := make([]*participant, 0, len(b.subs))
-	for _, sub := range b.subs {
+func (b *Bot) initParticipants() error {
+	subs, err := b.subRepository.GetAll()
+	if err != nil {
+		return err
+	}
+	participants := make([]*participant, 0, len(subs))
+	for _, sub := range subs {
 		msg := tgbotapi.NewMessage(sub.Id, b.messages.PleaseSuggestBookTitle)
 		b.tgBot.Send(msg)
 		p := &participant{
@@ -233,6 +238,7 @@ func (b *Bot) initParticipants() {
 		participants = append(participants, p)
 	}
 	b.bookGathering.participants = participants
+	return nil
 }
 
 // announceWinner defines a winner and sends a message to the group
@@ -343,10 +349,14 @@ func (b *Bot) runTelegramPoll() error {
 	if err != nil {
 		return err
 	}
+	subs, err := b.subRepository.GetAll()
+	if err != nil {
+		return err
+	}
 
 	b.telegramPoll.isActive = true
 	b.telegramPoll.pollId = msg.MessageID
-	b.telegramPoll.participants = len(b.subs)
+	b.telegramPoll.participants = len(subs)
 	return nil
 }
 
@@ -392,16 +402,6 @@ func (b *Bot) extractBooks() []string {
 		books = append(books, name)
 	}
 	return books
-}
-
-// isAlreadySub weather a given userId alredy subscribe to the bot
-func (b *Bot) isAlreadySub(userId int64) bool {
-	for _, s := range b.subs {
-		if s.Id == userId {
-			return true
-		}
-	}
-	return false
 }
 
 // getPhotoId returns a tgbotapi.FileID from a participant
