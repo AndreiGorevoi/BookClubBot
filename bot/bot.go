@@ -320,13 +320,13 @@ func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
 // runTelegramPollFlow stops a book gathering and runs a telegram poll
 func (b *Bot) runTelegramPollFlow() {
 	defer b.stopBookGathering()
-	b.msgAboutGatheringBooks()
 	err := b.runTelegramPoll()
 	if err != nil {
 		log.Printf("cannot run poll: %v\n", err)
 		return
 	}
 
+	b.msgAboutGatheringBooks()
 	b.deadlineNotificationTelegramPoll(time.Duration(b.cfg.TimeForTelegramPoll-b.cfg.NotifyBeforePoll) * time.Second)
 	b.closeTelegramPollAfterDelay(time.Duration(b.cfg.TimeForTelegramPoll) * time.Second)
 }
