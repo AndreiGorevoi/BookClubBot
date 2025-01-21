@@ -57,7 +57,7 @@ func readConfigFile(env string) (*AppConfig, error) {
 	fileName := fmt.Sprintf("%s/config_%s.json", folder, env)
 	f, err := os.Open(fileName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Cannot open %s", fileName)
 	}
 	defer f.Close()
 	return parsreAppConfig(f)
@@ -66,14 +66,14 @@ func readConfigFile(env string) (*AppConfig, error) {
 func parsreAppConfig(r io.Reader) (*AppConfig, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Cannot read from reader during parsing App config")
 	}
 
 	var res AppConfig
 	err = json.Unmarshal(data, &res)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Cannot unmarshal data to AppConfig during parsing App config")
 	}
 
 	return &res, nil

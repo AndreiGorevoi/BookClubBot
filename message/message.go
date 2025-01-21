@@ -51,7 +51,7 @@ func readMessagesFile(locale string) (*LocalizedMessages, error) {
 	fileName := fmt.Sprintf("messages_%s.json", locale)
 	f, err := os.Open(fmt.Sprintf("%s/%s", folder, fileName))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Cannot open the file: %s", fileName)
 	}
 	defer f.Close()
 	return parseMessaged(f)
@@ -60,13 +60,13 @@ func readMessagesFile(locale string) (*LocalizedMessages, error) {
 func parseMessaged(r io.Reader) (*LocalizedMessages, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Cannot read data from Messages file")
 	}
 
 	var res LocalizedMessages
 	err = json.Unmarshal(data, &res)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Cannot unmarshal data during parsing Messages file")
 	}
 	return &res, nil
 }
