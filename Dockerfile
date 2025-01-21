@@ -2,10 +2,10 @@ FROM golang:1.23 AS builder
 WORKDIR /app
 COPY . .
 RUN go mod tidy
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o book-club-bot ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o book-club-bot ./cmd/main.go
 
-FROM debian:bullseye-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 COPY --from=builder /app/book-club-bot .
 COPY --from=builder /app/config ./config

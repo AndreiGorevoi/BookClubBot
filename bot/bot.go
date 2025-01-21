@@ -392,7 +392,6 @@ func (b *Bot) closeTelegramPoll() {
 // extractBooks gains a slice of string from a books that participants suggested
 func (b *Bot) extractBooks() []string {
 	books := make([]string, 0, len(b.bookGathering.participants))
-	books = append(books, "Книга: Властелин Колец. Автор: Джон Роуэл Толкин")
 
 	for _, p := range b.bookGathering.participants {
 		if p.book == nil {
