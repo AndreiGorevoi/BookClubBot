@@ -4,7 +4,7 @@ COPY . .
 RUN go mod tidy
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o book-club-bot ./cmd/main.go
 
-FROM debian:slim
+FROM debian:bullseye-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /root/
 COPY --from=builder /app/book-club-bot .
