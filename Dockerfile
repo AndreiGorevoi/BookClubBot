@@ -2,7 +2,7 @@ FROM golang:1.23 AS builder
 WORKDIR /app
 COPY . .
 RUN go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o book-club-bot ./cmd/main.go
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o book-club-bot ./cmd/main.go
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
