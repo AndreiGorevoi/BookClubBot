@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -33,14 +32,10 @@ func LoadConfig() (*AppConfig, error) {
 	}
 
 	tKey := os.Getenv("telegrammApiKey")
-	groupIdStr := os.Getenv("groupId")
-
-	groupId, err := strconv.ParseInt(groupIdStr, 10, 64)
-
-	if err != nil {
-		return nil, err
+	if tKey == "" {
+		return nil, fmt.Errorf("cannot find telegrammApiKey env varaible")
 	}
-	cfg.GroupId = groupId
+
 	cfg.TKey = tKey
 	return cfg, nil
 }

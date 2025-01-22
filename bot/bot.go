@@ -4,6 +4,7 @@ import (
 	"BookClubBot/config"
 	"BookClubBot/message"
 	"BookClubBot/repository"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -14,23 +15,25 @@ import (
 )
 
 type Bot struct {
-	cfg           *config.AppConfig
-	tgBot         *tgbotapi.BotAPI
-	bookGathering *bookGathering
-	telegramPoll  *telegramPoll
-	messages      *message.LocalizedMessages
-	subRepository *repository.SubscriberRepository
+	cfg            *config.AppConfig
+	tgBot          *tgbotapi.BotAPI
+	bookGathering  *bookGathering
+	telegramPoll   *telegramPoll
+	messages       *message.LocalizedMessages
+	subRepository  *repository.SubscriberRepository
+	metaRepository *repository.MetadataRepository
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, metaRepository *repository.MetadataRepository) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &bookGathering{},
 		telegramPoll: &telegramPoll{
 			voted: make(map[int64]struct{}),
 		},
-		messages:      messages,
-		subRepository: subRepository,
+		messages:       messages,
+		subRepository:  subRepository,
+		metaRepository: metaRepository,
 	}
 }
 
@@ -44,6 +47,13 @@ func (b *Bot) Run() {
 	}
 
 	b.tgBot.Debug = b.cfg.DebugMode
+	groupId, err := b.metaRepository.GetGroupId()
+
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Fatal(err)
+	}
+
+	b.cfg.GroupId = int64(groupId)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = b.cfg.LongPollingTimeout
@@ -52,6 +62,15 @@ func (b *Bot) Run() {
 
 	for update := range updates {
 		if update.Message != nil {
+			if update.Message.NewChatMembers != nil {
+				b.handleBotAdded(update)
+				continue
+			}
+			if update.Message.LeftChatMember != nil && update.Message.LeftChatMember.ID == b.tgBot.Self.ID {
+				b.handleBotRemoved()
+				continue
+			}
+
 			if update.Message.Chat.ID == b.cfg.GroupId {
 				continue // ignore all messages from group
 			}
@@ -84,6 +103,29 @@ func (b *Bot) Run() {
 	}
 }
 
+func (b *Bot) handleBotRemoved() {
+	err := b.metaRepository.SaveGroupId(0)
+	if err != nil {
+		log.Printf("cannot handle bot removing: %v", err)
+		return
+	}
+	b.cfg.GroupId = 0
+}
+
+func (b *Bot) handleBotAdded(update tgbotapi.Update) {
+	for _, member := range update.Message.NewChatMembers {
+		if member.IsBot && member.ID == b.tgBot.Self.ID {
+			groupId := update.Message.Chat.ID
+			err := b.metaRepository.SaveGroupId(int(groupId))
+			if err != nil {
+				log.Printf("cannot handle bot adding: %v", err)
+				return
+			}
+			b.cfg.GroupId = groupId
+		}
+	}
+}
+
 // handleSubscription handles /subscribe command from a user that adds them to subs
 // if they are not subscribed yet
 func (b *Bot) handleSubscription(update *tgbotapi.Update) {
@@ -108,6 +150,11 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 
 // handleStartVote handles a starting a book gathering from subcribers
 func (b *Bot) handleStartVote(update *tgbotapi.Update) {
+	if b.cfg.GroupId == 0 {
+		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.CannotStartGatheringGroupIdMissing)
+		b.tgBot.Send(msg)
+		return
+	}
 	if b.bookGathering.active {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
 		b.tgBot.Send(msg)
@@ -243,6 +290,10 @@ func (b *Bot) initParticipants() error {
 
 // announceWinner defines a winner and sends a message to the group
 func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
+	if b.cfg.GroupId == 0 {
+		log.Println("cannot announce winner as GroupId is not innit")
+		return
+	}
 	winners := defineWinners(poll)
 	var txt string
 	switch len(winners) {
@@ -269,6 +320,10 @@ func (b *Bot) areAllBooksChosen() bool {
 
 // msgAboutGatheringBooks sends a message about books are going to be in a poll to the group chat
 func (b *Bot) msgAboutGatheringBooks() {
+	if b.cfg.GroupId == 0 {
+		log.Println("cannot send a msg about gathering books as GroupId is not innit")
+		return
+	}
 	// Ensure there are participants with books
 	if b.bookGathering == nil || len(b.bookGathering.participants) == 0 {
 		log.Println("No participants or books found.")
@@ -333,6 +388,9 @@ func (b *Bot) runTelegramPollFlow() {
 
 // runTelegramPoll creates and starts a poll for choosing a book in the group
 func (b *Bot) runTelegramPoll() error {
+	if b.cfg.GroupId == 0 {
+		return fmt.Errorf("cannot run telegram poll as groupId is not innit")
+	}
 	if b.telegramPoll.isActive {
 		return errors.New("cannot run a poll as there is a still active poll")
 	}
@@ -370,6 +428,11 @@ func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
 
 // closeTelegramPoll stops a poll and anounce the winner
 func (b *Bot) closeTelegramPoll() {
+	if b.cfg.GroupId == 0 {
+		log.Println("cannot close a telegram poll as GroupId is not innit")
+		return
+	}
+
 	if !b.telegramPoll.isActive {
 		log.Print("there is not an active poll, cannot close it")
 		return
@@ -448,6 +511,10 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 // of a telegram poll. Delay is taken from a config
 func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 	go func() {
+		if b.cfg.GroupId == 0 {
+			log.Println("cannot announce the deadline as GroupId is not innit")
+			return
+		}
 		time.Sleep(delay)
 		if !b.telegramPoll.isActive {
 			return

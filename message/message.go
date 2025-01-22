@@ -10,28 +10,29 @@ import (
 const folder = "./message"
 
 type LocalizedMessages struct {
-	AlreadySubscribedWaitForVoting string `json:"already_subscribed_wait_for_voting"`
-	WelcomeBookClubNextVoting      string `json:"welcome_book_club_next_voting"`
-	VotingAlreadyStartedWaitForEnd string `json:"voting_already_started_wait_for_end"`
-	VotingNotStartedOrEnded        string `json:"voting_not_started_or_ended"`
-	NotParticipantCurrentVoting    string `json:"not_participant_current_voting"`
-	WhoIsAuthor                    string `json:"who_is_author"`
-	WriteBookDescription           string `json:"write_book_description"`
-	AttachCoverPhoto               string `json:"attach_cover_photo"`
-	BookAddedToNextVoting          string `json:"book_added_to_next_voting"`
-	ImageMissingBookAdded          string `json:"image_missing_book_added"`
-	VotingAlreadyCompleted         string `json:"voting_already_completed"`
-	AlreadyDeclinedSuggestion      string `json:"already_declined_suggestion"`
-	UnableToSuggestBook            string `json:"unable_to_suggest_book"`
-	PleaseSuggestBookTitle         string `json:"please_suggest_book_title"`
-	ErrorDeterminingWinner         string `json:"error_determining_winner"`
-	WeHaveAWinner                  string `json:"we_have_a_winner"`
-	NoClearWinnerManualVoting      string `json:"no_clear_winner_manual_voting"`
-	ChooseUpToTwoBooks             string `json:"choose_up_to_two_books"`
-	BookLabel                      string `json:"book_label"`
-	AuthorLabel                    string `json:"author_label"`
-	BookSubmissionDeadline         string `json:"book_submission_deadline"`
-	VotingEndsInHours              string `json:"voting_ends_in_hours"`
+	AlreadySubscribedWaitForVoting     string `json:"already_subscribed_wait_for_voting"`
+	WelcomeBookClubNextVoting          string `json:"welcome_book_club_next_voting"`
+	VotingAlreadyStartedWaitForEnd     string `json:"voting_already_started_wait_for_end"`
+	VotingNotStartedOrEnded            string `json:"voting_not_started_or_ended"`
+	NotParticipantCurrentVoting        string `json:"not_participant_current_voting"`
+	WhoIsAuthor                        string `json:"who_is_author"`
+	WriteBookDescription               string `json:"write_book_description"`
+	AttachCoverPhoto                   string `json:"attach_cover_photo"`
+	BookAddedToNextVoting              string `json:"book_added_to_next_voting"`
+	ImageMissingBookAdded              string `json:"image_missing_book_added"`
+	VotingAlreadyCompleted             string `json:"voting_already_completed"`
+	AlreadyDeclinedSuggestion          string `json:"already_declined_suggestion"`
+	UnableToSuggestBook                string `json:"unable_to_suggest_book"`
+	PleaseSuggestBookTitle             string `json:"please_suggest_book_title"`
+	ErrorDeterminingWinner             string `json:"error_determining_winner"`
+	WeHaveAWinner                      string `json:"we_have_a_winner"`
+	NoClearWinnerManualVoting          string `json:"no_clear_winner_manual_voting"`
+	ChooseUpToTwoBooks                 string `json:"choose_up_to_two_books"`
+	BookLabel                          string `json:"book_label"`
+	AuthorLabel                        string `json:"author_label"`
+	BookSubmissionDeadline             string `json:"book_submission_deadline"`
+	VotingEndsInHours                  string `json:"voting_ends_in_hours"`
+	CannotStartGatheringGroupIdMissing string `json:"cannot_start_gathering_groupId_missing"`
 }
 
 func LoadMessaged() (*LocalizedMessages, error) {

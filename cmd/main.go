@@ -27,7 +27,8 @@ func main() {
 	}
 
 	subRepository := repository.NewSubscriberRepository(db)
+	metaRepository := repository.NewMetadataRepository(db)
 
-	b := bot.NewBot(cfg, msg, subRepository)
+	b := bot.NewBot(cfg, msg, subRepository, metaRepository)
 	b.Run()
 }

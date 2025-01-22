@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func TestInitDB_NewDataBase(t *testing.T) {
@@ -28,6 +28,10 @@ func TestInitDB_NewDataBase(t *testing.T) {
 	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='subscriber'`).Scan(&tableName)
 	assert.NoError(t, err)
 	assert.Equal(t, "subscriber", tableName)
+
+	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'`).Scan(&tableName)
+	assert.NoError(t, err)
+	assert.Equal(t, "metadata", tableName)
 }
 
 func TestInitDB_DataBaseExist(t *testing.T) {
