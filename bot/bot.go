@@ -330,35 +330,19 @@ func (b *Bot) msgAboutGatheringBooks() {
 		return
 	}
 
-	var mediaGroup []interface{}
+	batches := splitMedia(b.bookGathering.participants, 10)
 
-	for _, participant := range b.bookGathering.participants {
-		// Check if the participant has suggested a book
-		if participant.book == nil {
-			continue
+	for i, batch := range batches {
+		// skip whole process if there is less than 2 books
+		if i == 0 && len(batch) < 2 {
+			log.Println("cannot send message about gathered book as it less than 2")
+			return
 		}
+		// Create the media group message
+		msg := tgbotapi.NewMediaGroup(b.cfg.GroupId, batch)
 
-		// Add an image for the book
-		bookImage := participant.bookImage()
-		bookImage.Caption = participant.bookCaption()
-		bookImage.ParseMode = "Markdown"
-		mediaGroup = append(mediaGroup, bookImage)
-	}
-
-	// Check if there are any media items to send
-	if len(mediaGroup) == 0 {
-		log.Println("No books to send in the media group.")
-		return
-	}
-
-	// Create the media group message
-	msg := tgbotapi.NewMediaGroup(b.cfg.GroupId, mediaGroup)
-
-	// Send the media group
-	_, err := b.tgBot.Send(msg)
-	if err != nil {
-		log.Printf("Failed to send media group: %v\n", err)
-		return
+		// Send the media group
+		b.tgBot.Send(msg)
 	}
 }
 
@@ -375,13 +359,14 @@ func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
 // runTelegramPollFlow stops a book gathering and runs a telegram poll
 func (b *Bot) runTelegramPollFlow() {
 	defer b.stopBookGathering()
+	b.msgAboutGatheringBooks()
+
 	err := b.runTelegramPoll()
 	if err != nil {
 		log.Printf("cannot run poll: %v\n", err)
 		return
 	}
 
-	b.msgAboutGatheringBooks()
 	b.deadlineNotificationTelegramPoll(time.Duration(b.cfg.TimeForTelegramPoll-b.cfg.NotifyBeforePoll) * time.Second)
 	b.closeTelegramPollAfterDelay(time.Duration(b.cfg.TimeForTelegramPoll) * time.Second)
 }

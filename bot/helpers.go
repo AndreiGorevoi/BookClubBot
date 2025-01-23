@@ -18,3 +18,29 @@ func defineWinners(res *tgbotapi.Poll) []string {
 
 	return m[max]
 }
+
+func splitMedia(participants []*participant, batchSize int) [][]interface{} {
+	var batches [][]interface{}
+	var currentBatch []interface{}
+	for _, participant := range participants {
+		// Check if the participant has suggested a book
+		if participant.book == nil {
+			continue
+		}
+
+		// Add an image for the book
+		bookImage := participant.bookImage()
+		bookImage.Caption = participant.bookCaption()
+		bookImage.ParseMode = "Markdown"
+		currentBatch = append(currentBatch, bookImage)
+		if len(currentBatch) == batchSize {
+			batches = append(batches, currentBatch)
+			currentBatch = []interface{}{}
+		}
+	}
+
+	if len(currentBatch) > 0 {
+		batches = append(batches, currentBatch)
+	}
+	return batches
+}
