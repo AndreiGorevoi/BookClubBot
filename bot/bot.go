@@ -342,7 +342,10 @@ func (b *Bot) msgAboutGatheringBooks() {
 		msg := tgbotapi.NewMediaGroup(b.cfg.GroupId, batch)
 
 		// Send the media group
-		b.tgBot.Send(msg)
+		_, err := b.tgBot.Send(msg)
+		if err != nil {
+			log.Print(err)
+		}
 	}
 }
 

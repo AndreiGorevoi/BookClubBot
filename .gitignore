@@ -28,3 +28,6 @@ go.work.sum
 db/*
 
 .DS_Store
+
+#logs
+*.log

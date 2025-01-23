@@ -1,6 +1,10 @@
 package bot
 
-import tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+import (
+	"unicode/utf8"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+)
 
 func defineWinners(res *tgbotapi.Poll) []string {
 	if res == nil {
@@ -30,7 +34,7 @@ func splitMedia(participants []*participant, batchSize int) [][]interface{} {
 
 		// Add an image for the book
 		bookImage := participant.bookImage()
-		bookImage.Caption = participant.bookCaption()
+		bookImage.Caption = truncateString(participant.bookCaption(), 1024)
 		bookImage.ParseMode = "Markdown"
 		currentBatch = append(currentBatch, bookImage)
 		if len(currentBatch) == batchSize {
@@ -43,4 +47,15 @@ func splitMedia(participants []*participant, batchSize int) [][]interface{} {
 		batches = append(batches, currentBatch)
 	}
 	return batches
+}
+
+func truncateString(input string, limit int) string {
+	// Check the rune count in the string
+	if utf8.RuneCountInString(input) <= limit {
+		return input // Return as-is if within the limit
+	}
+
+	// Truncate to the specified limit
+	runes := []rune(input)       // Convert string to a slice of runes (characters)
+	return string(runes[:limit]) // Take only the first 'limit' runes
 }
