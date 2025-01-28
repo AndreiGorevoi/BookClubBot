@@ -206,7 +206,12 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 	switch p.status {
 	case bookAsked:
-		bookTitle := update.Message.Text
+		bookTitle := strings.TrimSpace(update.Message.Text)
+		if b.isBookAlreadyProposed(bookTitle) {
+			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.BookAlreadyProposed)
+			b.tgBot.Send(msg)
+			return
+		}
 		p.book = &book{
 			title: bookTitle,
 		}
@@ -511,4 +516,13 @@ func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 		msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
 		b.tgBot.Send(msg)
 	}()
+}
+
+func (b *Bot) isBookAlreadyProposed(bookTitle string) bool {
+	for _, p := range b.bookGathering.participants {
+		if p.book.title == bookTitle {
+			return true
+		}
+	}
+	return false
 }
