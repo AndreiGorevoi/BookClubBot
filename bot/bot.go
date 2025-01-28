@@ -83,6 +83,8 @@ func (b *Bot) Run() {
 				b.handleStartVote(&update)
 			case "/skip":
 				b.handleSkip(&update)
+			case "/help":
+				b.handleHelp(&update)
 			default:
 				b.handleUserMsg(&update)
 			}
@@ -265,6 +267,12 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 
 	b.bookGathering.removeParticipant(userId)
 	msg := tgbotapi.NewMessage(userId, b.messages.UnableToSuggestBook)
+	b.tgBot.Send(msg)
+}
+
+// handleHelp handles a '/help' message from a user to give hime a help message about bot's functionality
+func (b *Bot) handleHelp(update *tgbotapi.Update) {
+	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.HelpInfo)
 	b.tgBot.Send(msg)
 }
 
@@ -518,6 +526,7 @@ func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 	}()
 }
 
+// isBookAlreadyProposed checks weather a book with provided title is already proposed by another particiapnt
 func (b *Bot) isBookAlreadyProposed(bookTitle string) bool {
 	for _, p := range b.bookGathering.participants {
 		if p.book.title == bookTitle {

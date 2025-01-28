@@ -34,6 +34,7 @@ type LocalizedMessages struct {
 	VotingEndsInHours                  string `json:"voting_ends_in_hours"`
 	CannotStartGatheringGroupIdMissing string `json:"cannot_start_gathering_groupId_missing"`
 	BookAlreadyProposed                string `json:"book_already_proposed"`
+	HelpInfo                           string `json:"help_info"`
 }
 
 func LoadMessaged() (*LocalizedMessages, error) {
