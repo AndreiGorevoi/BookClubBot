@@ -36,6 +36,10 @@ func initTables(db *sql.DB) error {
         nick TEXT,
         archived BOOLEAN DEFAULT false)`)
 
+	if err != nil {
+		return err
+	}
+
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS metadata (
 		keyName text PRIMARY KEY,
 		value TEXT)`)

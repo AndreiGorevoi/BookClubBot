@@ -10,17 +10,21 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func setupMetaMockDB(t *testing.T) (*repository.MetadataRepository, sqlmock.Sqlmock) {
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	repo := repository.NewMetadataRepository(db)
+	t.Cleanup(func() { db.Close() })
+
+	return repo, mock
+}
+
 func TestGetGroupId(t *testing.T) {
 	t.Run("Success - groupId found", func(t *testing.T) {
-		// Mock DB and expectations
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectQuery("SELECT value FROM metadata where keyName='groupId'").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("123"))
-
-		repo := repository.NewMetadataRepository(db)
 
 		// Execute method
 		groupId, err := repo.GetGroupId()
@@ -31,14 +35,10 @@ func TestGetGroupId(t *testing.T) {
 	})
 
 	t.Run("Error - groupId not found", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectQuery("SELECT value FROM metadata where keyName='groupId'").
 			WillReturnError(sql.ErrNoRows)
-
-		repo := repository.NewMetadataRepository(db)
 
 		groupId, err := repo.GetGroupId()
 
@@ -48,14 +48,10 @@ func TestGetGroupId(t *testing.T) {
 	})
 
 	t.Run("Error - Conversion failure", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectQuery("SELECT value FROM metadata where keyName='groupId'").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("invalid"))
-
-		repo := repository.NewMetadataRepository(db)
 
 		groupId, err := repo.GetGroupId()
 
@@ -65,14 +61,10 @@ func TestGetGroupId(t *testing.T) {
 	})
 
 	t.Run("Error - Query execution failure", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectQuery("SELECT value FROM metadata where keyName='groupId'").
 			WillReturnError(errors.New("query error"))
-
-		repo := repository.NewMetadataRepository(db)
 
 		groupId, err := repo.GetGroupId()
 
@@ -84,67 +76,51 @@ func TestGetGroupId(t *testing.T) {
 
 func TestSaveGroupId(t *testing.T) {
 	t.Run("Success - groupId saved", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectExec("INSERT INTO metadata\\(keyName, value\\).*").
 			WithArgs("123").
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
-		repo := repository.NewMetadataRepository(db)
-
-		err = repo.SaveGroupId(123)
+		err := repo.SaveGroupId(123)
 
 		assert.NoError(t, err)
 	})
 
 	t.Run("Error - Insert failure", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectExec("INSERT INTO metadata\\(keyName, value\\).*").
 			WithArgs("123").
 			WillReturnError(errors.New("insert error"))
 
-		repo := repository.NewMetadataRepository(db)
-
-		err = repo.SaveGroupId(123)
+		err := repo.SaveGroupId(123)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot insert groupId '123' into metadata table")
 	})
 
 	t.Run("Error - No rows affected", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectExec("INSERT INTO metadata\\(keyName, value\\).*").
 			WithArgs("123").
 			WillReturnResult(sqlmock.NewResult(1, 0))
 
-		repo := repository.NewMetadataRepository(db)
-
-		err = repo.SaveGroupId(123)
+		err := repo.SaveGroupId(123)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no rows were affected after attempting to insert groupId '123' into metadata table")
 	})
 
 	t.Run("Error - RowsAffected failure", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		assert.NoError(t, err)
-		defer db.Close()
+		repo, mock := setupMetaMockDB(t)
 
 		mock.ExpectExec("INSERT INTO metadata\\(keyName, value\\).*").
 			WithArgs("123").
 			WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected error")))
 
-		repo := repository.NewMetadataRepository(db)
-
-		err = repo.SaveGroupId(123)
+		err := repo.SaveGroupId(123)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot get affected rows after inserting groupId '123' into metadata table")

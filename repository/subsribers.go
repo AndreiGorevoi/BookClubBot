@@ -81,3 +81,19 @@ func (r *SubscriberRepository) ArchivedSubscriber(id int64) error {
 
 	return nil
 }
+
+func (r *SubscriberRepository) FindById(id int64) (*Subscriber, error) {
+	q := "SELECT id, first_name, last_name, nick, archived FROM subscriber where id = ? and archived = false"
+	var s Subscriber
+	err := r.db.QueryRow(q, id).Scan(&s.Id, &s.FirstName, &s.LastName, &s.Nick, &s.Archived)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &s, nil
+}

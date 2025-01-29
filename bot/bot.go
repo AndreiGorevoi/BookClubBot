@@ -75,6 +75,21 @@ func (b *Bot) Run() {
 				continue // ignore all messages from group
 			}
 
+			s, err := b.subRepository.FindById(update.Message.Chat.ID)
+
+			if err != nil {
+				log.Printf("cannot execute 'FindById' from subRepository: %s", err)
+				msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.SomethingWrong)
+				b.tgBot.Send(msg)
+				continue
+			}
+
+			if update.Message.Text != "/subscribe" && s == nil {
+				msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.NotSubscriber)
+				b.tgBot.Send(msg)
+				continue
+			}
+
 			// handle msgs from users
 			switch update.Message.Text {
 			case "/subscribe":
