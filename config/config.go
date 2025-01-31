@@ -13,14 +13,15 @@ const folder = "./config"
 
 type AppConfig struct {
 	GroupId               int64
-	TimeToGatherBooks     int  `json:"time_to_gather_books"`    // seconds
-	NotifyBeforeGathering int  `json:"notify_before_gathering"` // seconds
-	TimeForTelegramPoll   int  `json:"time_for_telegram_poll"`  // seconds
-	NotifyBeforePoll      int  `json:"notify_before_poll"`      //seconds
-	LongPollingTimeout    int  `json:"long_polling_timeout"`    // seconds
-	DebugMode             bool `json:"debug_mode"`
-
-	TKey string
+	TimeToGatherBooks     int `json:"time_to_gather_books"`    // seconds
+	NotifyBeforeGathering int `json:"notify_before_gathering"` // seconds
+	TimeForTelegramPoll   int `json:"time_for_telegram_poll"`  // seconds
+	NotifyBeforePoll      int `json:"notify_before_poll"`      //seconds
+	LongPollingTimeout    int `json:"long_polling_timeout"`    // seconds
+	TKey                  string
+	DBPath                string `json:"db_path"`
+	LogFileName           string `json:"log_file_name"`
+	DebugMode             bool   `json:"debug_mode"`
 }
 
 func LoadConfig() (*AppConfig, error) {

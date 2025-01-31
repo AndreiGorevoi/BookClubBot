@@ -4,5 +4,7 @@
   "time_for_telegram_poll": 60,
   "notify_before_poll": 30,
   "debug_mode": true,
-  "long_polling_timeout": 60
+  "long_polling_timeout": 60,
+  "db_path": "./db/book_club_bot.db",
+  "log_file_name": "application.log"
 }

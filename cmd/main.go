@@ -12,24 +12,24 @@ import (
 )
 
 func main() {
-	logFile, err := os.OpenFile("application.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	logFile, err := os.OpenFile(cfg.LogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer logFile.Close()
 	log.SetOutput(logFile)
 
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	msg, err := message.LoadMessaged()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	db, err := repository.InitDB("./db/book_club_bot.db")
+	db, err := repository.InitDB(cfg.DBPath)
 	if err != nil {
 		log.Fatal(err)
 	}

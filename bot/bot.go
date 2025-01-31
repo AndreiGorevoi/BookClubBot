@@ -163,6 +163,7 @@ func (b *Bot) handleSubscription(update *tgbotapi.Update) {
 	}
 	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WelcomeBookClubNextVoting)
 	b.tgBot.Send(msg)
+	log.Printf("user %s %s subsribed\n", newSub.FirstName, newSub.LastName)
 }
 
 // handleStartVote handles a starting a book gathering from subcribers
@@ -259,6 +260,7 @@ func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.ImageMissingBookAdded)
 			b.tgBot.Send(msg)
 		}
+		log.Printf("user: %s %s suggested a book.\n", p.firstName, p.lastName)
 		p.status = finished
 	case finished:
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
@@ -283,6 +285,7 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 	b.bookGathering.removeParticipant(userId)
 	msg := tgbotapi.NewMessage(userId, b.messages.UnableToSuggestBook)
 	b.tgBot.Send(msg)
+	log.Printf("user: %d skiped a book gathering.\n", userId)
 }
 
 // handleHelp handles a '/help' message from a user to give hime a help message about bot's functionality
@@ -372,7 +375,7 @@ func (b *Bot) msgAboutGatheringBooks() {
 		// Send the media group
 		_, err := b.tgBot.Send(msg)
 		if err != nil {
-			log.Print(err)
+			log.Printf("ERROR: %s\n", err)
 		}
 	}
 }
@@ -394,7 +397,7 @@ func (b *Bot) runTelegramPollFlow() {
 
 	err := b.runTelegramPoll()
 	if err != nil {
-		log.Printf("cannot run poll: %v\n", err)
+		log.Printf("ERROR: cannot run poll: %v\n", err)
 		return
 	}
 
@@ -462,7 +465,7 @@ func (b *Bot) closeTelegramPoll() {
 	}
 	res, err := b.tgBot.StopPoll(finishPoll)
 	if err != nil {
-		log.Print(err)
+		log.Printf("ERROR: %s", err)
 		return
 	}
 	b.announceWinner(&res)
