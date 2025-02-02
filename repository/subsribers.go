@@ -64,9 +64,9 @@ func (r *SubscriberRepository) AddSubscriber(sub Subscriber) error {
 	return nil
 }
 
-func (r *SubscriberRepository) ArchivedSubscriber(id int64) error {
-	q := "UPDATE subscriber SET archived = true where id = ?"
-	result, err := r.db.Exec(q, id)
+func (r *SubscriberRepository) SetSubscriberArchived(id int64, archived bool) error {
+	q := "UPDATE subscriber SET archived = ? where id = ?"
+	result, err := r.db.Exec(q, archived, id)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func (r *SubscriberRepository) ArchivedSubscriber(id int64) error {
 }
 
 func (r *SubscriberRepository) FindById(id int64) (*Subscriber, error) {
-	q := "SELECT id, first_name, last_name, nick, archived FROM subscriber where id = ? and archived = false"
+	q := "SELECT id, first_name, last_name, nick, archived FROM subscriber where id = ?"
 	var s Subscriber
 	err := r.db.QueryRow(q, id).Scan(&s.Id, &s.FirstName, &s.LastName, &s.Nick, &s.Archived)
 

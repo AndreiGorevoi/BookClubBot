@@ -84,7 +84,8 @@ func (b *Bot) Run() {
 				continue
 			}
 
-			if update.Message.Text != "/subscribe" && s == nil {
+			// handle unsubscribed user's msg
+			if update.Message.Text != "/subscribe" && (s == nil || s.Archived == true) {
 				msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.NotSubscriber)
 				b.tgBot.Send(msg)
 				continue
@@ -93,9 +94,11 @@ func (b *Bot) Run() {
 			// handle msgs from users
 			switch update.Message.Text {
 			case "/subscribe":
-				b.handleSubscription(&update)
+				b.processCommand(&update, b.handleSubsribe)
+			case "/unsubscribe":
+				b.processCommand(&update, b.handleUnsubscribe)
 			case "/start_vote":
-				b.handleStartVote(&update)
+				b.processCommand(&update, b.handleStartVote)
 			case "/skip":
 				b.handleSkip(&update)
 			case "/help":
@@ -143,50 +146,77 @@ func (b *Bot) handleBotAdded(update tgbotapi.Update) {
 	}
 }
 
-// handleSubscription handles /subscribe command from a user that adds them to subs
+// handleSubsribe handles /subscribe command from a user that adds them to subs
 // if they are not subscribed yet
-func (b *Bot) handleSubscription(update *tgbotapi.Update) {
-	newSub := repository.Subscriber{
-		Id:        update.Message.From.ID,
-		Nick:      update.Message.From.UserName,
-		FirstName: update.Message.From.FirstName,
-		LastName:  update.Message.From.LastName,
+func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
+	uid := update.Message.From.ID
+	s, err := b.subRepository.FindById(uid)
+	if err != nil {
+		return fmt.Errorf("failed to find subscriber with id %d: %w", uid, err)
 	}
-	err := b.subRepository.AddSubscriber(newSub)
-	if errors.Is(err, repository.ErrUserAlreadySubscribed) {
+
+	//case1: New subscriber (not found in DB)
+	if s == nil {
+		newSub := repository.Subscriber{
+			Id:        uid,
+			Nick:      update.Message.From.UserName,
+			FirstName: update.Message.From.FirstName,
+			LastName:  update.Message.From.LastName,
+		}
+		err = b.subRepository.AddSubscriber(newSub)
+		if err != nil {
+			return fmt.Errorf("failed to add a new subscriber: %w", err)
+		}
+		b.sendMessage(uid, b.messages.WelcomeBookClubNextVoting)
+		log.Printf("user %s %s subsribed\n", newSub.FirstName, newSub.LastName)
+		return nil
+	}
+
+	//case2: Already subscribed and active
+	if !s.Archived {
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AlreadySubscribedWaitForVoting)
 		b.tgBot.Send(msg)
-		return
-	} else if err != nil {
-		log.Println(err)
-		return
+		return nil
 	}
-	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WelcomeBookClubNextVoting)
-	b.tgBot.Send(msg)
-	log.Printf("user %s %s subsribed\n", newSub.FirstName, newSub.LastName)
+
+	// case3: Reactivating archived subscriber
+	if err := b.subRepository.SetSubscriberArchived(uid, false); err != nil {
+		return fmt.Errorf("failed to reactivate a subscriber with id %d : %w", uid, err)
+	}
+	b.sendMessage(uid, b.messages.WelcomeBack)
+	log.Printf("user %s %s reactivated\n", s.FirstName, s.LastName)
+	return nil
+}
+
+func (b *Bot) handleUnsubscribe(update *tgbotapi.Update) error {
+	uid := update.Message.From.ID
+	if err := b.subRepository.SetSubscriberArchived(uid, true); err != nil {
+		return fmt.Errorf("failed to unsubsride a user with id %d : %w", uid, err)
+	}
+	log.Printf("user with user id: %d unsubsribed", uid)
+	b.sendMessage(uid, b.messages.Unsubsribed)
+	return nil
 }
 
 // handleStartVote handles a starting a book gathering from subcribers
-func (b *Bot) handleStartVote(update *tgbotapi.Update) {
+func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 	if b.cfg.GroupId == 0 {
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.CannotStartGatheringGroupIdMissing)
-		b.tgBot.Send(msg)
-		return
+		b.sendMessage(update.Message.From.ID, b.messages.CannotStartGatheringGroupIdMissing)
+		return nil
 	}
 	if b.bookGathering.active {
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
-		b.tgBot.Send(msg)
-		return
+		b.sendMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
+		return nil
 	}
 
 	b.bookGathering.active = true
 	err := b.initParticipants()
 	if err != nil {
-		log.Println(err)
-		return
+		return fmt.Errorf("failed to init participants: %w", err)
 	}
 	b.deadlineNotificationBookGathering(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second)
 	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
+	return nil
 }
 
 // handleUserMsg handles any message from a user
@@ -272,26 +302,22 @@ func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 func (b *Bot) handleSkip(update *tgbotapi.Update) {
 	userId := update.Message.From.ID
 	if !b.bookGathering.active {
-		msg := tgbotapi.NewMessage(userId, b.messages.VotingNotStartedOrEnded)
-		b.tgBot.Send(msg)
+		b.sendMessage(userId, b.messages.VotingNotStartedOrEnded)
 		return
 	}
 	if !b.bookGathering.isParticipant(userId) {
-		msg := tgbotapi.NewMessage(userId, b.messages.AlreadyDeclinedSuggestion)
-		b.tgBot.Send(msg)
+		b.sendMessage(userId, b.messages.AlreadyDeclinedSuggestion)
 		return
 	}
 
 	b.bookGathering.removeParticipant(userId)
-	msg := tgbotapi.NewMessage(userId, b.messages.UnableToSuggestBook)
-	b.tgBot.Send(msg)
+	b.sendMessage(userId, b.messages.UnableToSuggestBook)
 	log.Printf("user: %d skiped a book gathering.\n", userId)
 }
 
 // handleHelp handles a '/help' message from a user to give hime a help message about bot's functionality
 func (b *Bot) handleHelp(update *tgbotapi.Update) {
-	msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.HelpInfo)
-	b.tgBot.Send(msg)
+	b.sendMessage(update.Message.From.ID, b.messages.HelpInfo)
 }
 
 // initParticipants fills participants to the bookGathering filds by
@@ -552,4 +578,18 @@ func (b *Bot) isBookAlreadyProposed(bookTitle string) bool {
 		}
 	}
 	return false
+}
+
+// sendMessage is a helper function that sends a message to a user
+func (b *Bot) sendMessage(userID int64, text string) {
+	msg := tgbotapi.NewMessage(userID, text)
+	b.tgBot.Send(msg)
+}
+
+// processCommand is a wrapper function that helps to consolidate printing of Something Wrong messages
+func (b *Bot) processCommand(update *tgbotapi.Update, handler func(*tgbotapi.Update) error) {
+	if err := handler(update); err != nil {
+		log.Printf("ERROR: %s", err)
+		b.sendMessage(update.Message.From.ID, b.messages.SomethingWrong)
+	}
 }
