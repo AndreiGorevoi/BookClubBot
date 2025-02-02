@@ -39,6 +39,7 @@ type LocalizedMessages struct {
 	NotSubscriber                      string `json:"not_subscriber"`
 	WelcomeBack                        string `json:"welcome_back"`
 	Unsubsribed                        string `json:"unsubsribed"`
+	GreetingMessage                    string `json:"greeting_message"`
 }
 
 func LoadMessaged() (*LocalizedMessages, error) {

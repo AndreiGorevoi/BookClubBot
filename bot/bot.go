@@ -142,6 +142,7 @@ func (b *Bot) handleBotAdded(update tgbotapi.Update) {
 				return
 			}
 			b.cfg.GroupId = groupId
+			b.sendMessage(groupId, b.messages.GreetingMessage)
 		}
 	}
 }
