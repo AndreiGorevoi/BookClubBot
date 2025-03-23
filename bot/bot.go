@@ -2,8 +2,8 @@ package bot
 
 import (
 	"BookClubBot/config"
+	"BookClubBot/internal/repository"
 	"BookClubBot/message"
-	"BookClubBot/repository"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -15,25 +15,25 @@ import (
 )
 
 type Bot struct {
-	cfg            *config.AppConfig
-	tgBot          *tgbotapi.BotAPI
-	bookGathering  *bookGathering
-	telegramPoll   *telegramPoll
-	messages       *message.LocalizedMessages
-	subRepository  *repository.SubscriberRepository
-	metaRepository *repository.MetadataRepository
+	cfg                *config.AppConfig
+	tgBot              *tgbotapi.BotAPI
+	bookGathering      *bookGathering
+	telegramPoll       *telegramPoll
+	messages           *message.LocalizedMessages
+	subRepository      *repository.SubscriberRepository
+	settingsRepository *repository.SettingsRepository
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, metaRepository *repository.MetadataRepository) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, settingsRepository *repository.SettingsRepository) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &bookGathering{},
 		telegramPoll: &telegramPoll{
 			voted: make(map[int64]struct{}),
 		},
-		messages:       messages,
-		subRepository:  subRepository,
-		metaRepository: metaRepository,
+		messages:           messages,
+		subRepository:      subRepository,
+		settingsRepository: settingsRepository,
 	}
 }
 
@@ -47,7 +47,7 @@ func (b *Bot) Run() {
 	}
 
 	b.tgBot.Debug = b.cfg.DebugMode
-	groupId, err := b.metaRepository.GetGroupId()
+	groupId, err := b.settingsRepository.GetGroupId()
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		log.Fatal(err)

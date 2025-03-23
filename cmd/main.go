@@ -3,12 +3,10 @@ package main
 import (
 	"BookClubBot/bot"
 	"BookClubBot/config"
+	"BookClubBot/internal/repository"
 	"BookClubBot/message"
-	"BookClubBot/repository"
 	"log"
 	"os"
-
-	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -29,14 +27,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	db, err := repository.InitDB(cfg.DBPath)
+	db, err := repository.InitMongoDB(cfg.DBPath, "book_club_db")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	subRepository := repository.NewSubscriberRepository(db)
-	metaRepository := repository.NewMetadataRepository(db)
+	settingsRepository := repository.NewSettingsRepository(db)
 
-	b := bot.NewBot(cfg, msg, subRepository, metaRepository)
+	b := bot.NewBot(cfg, msg, subRepository, settingsRepository)
 	b.Run()
 }
