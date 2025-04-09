@@ -27,13 +27,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	db, err := repository.InitMongoDB(cfg.DBPath, "book_club_db")
+	db, err := repository.InitMongoDB(cfg.MongoURI, cfg.DBName)
+	if err != nil {
+		log.Fatalf("error during initialisation of mongodb : '%v'", err)
+	}
+
+	subRepository, err := repository.NewSubscriberRepository(db)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	subRepository := repository.NewSubscriberRepository(db)
-	settingsRepository := repository.NewSettingsRepository(db)
+	settingsRepository, err := repository.NewSettingsRepository(db)
+
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	b := bot.NewBot(cfg, msg, subRepository, settingsRepository)
 	b.Run()

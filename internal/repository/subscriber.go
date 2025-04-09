@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -37,10 +38,10 @@ func (s *SubscriberRepository) SaveSubscriber(ctx context.Context, subscriber *m
 	return err
 }
 
-func (s *SubscriberRepository) ArchiveSubscriber(ctx context.Context, subscriberID int64) error {
+func (s *SubscriberRepository) SetArchiveSubscriber(ctx context.Context, subscriberID int64, archived bool) error {
 	collection := s.db.Collection(subs_collection)
 	filter := bson.M{"_id": subscriberID}
-	update := bson.M{"$set": bson.M{"archived": true}}
+	update := bson.M{"$set": bson.M{"archived": archived}}
 
 	result, err := collection.UpdateOne(ctx, filter, update)
 	if err != nil {
@@ -84,7 +85,7 @@ func (s *SubscriberRepository) GetSubscriberById(ctx context.Context, id int64) 
 	var subscriber models.Subscriber
 	if err := collection.FindOne(ctx, filter).Decode(&subscriber); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("subscriber with id %d not found", id)
+			return nil, nil
 		}
 		return nil, err
 	}

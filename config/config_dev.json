@@ -6,5 +6,7 @@
   "debug_mode": true,
   "long_polling_timeout": 60,
   "db_path": "./db/book_club_bot.db",
+  "mongo_uri": "mongodb://localhost:27017",
+  "db_name": "book_club_boot",
   "log_file_name": "application.log"
 }

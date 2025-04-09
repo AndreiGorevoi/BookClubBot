@@ -2,9 +2,10 @@ package bot
 
 import (
 	"BookClubBot/config"
+	"BookClubBot/internal/models"
 	"BookClubBot/internal/repository"
 	"BookClubBot/message"
-	"database/sql"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type Bot struct {
@@ -47,10 +49,15 @@ func (b *Bot) Run() {
 	}
 
 	b.tgBot.Debug = b.cfg.DebugMode
-	groupId, err := b.settingsRepository.GetGroupId()
-
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		log.Fatal(err)
+	groupId, err := b.settingsRepository.GetGroupId(context.Background())
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			if err := b.settingsRepository.SaveGroupID(context.Background(), 0); err != nil {
+				log.Fatalf("error during setting a group id: '%v'", err)
+			}
+		} else {
+			log.Fatalf("unexpected error getting group id: '%v'", err)
+		}
 	}
 
 	b.cfg.GroupId = int64(groupId)
@@ -75,7 +82,7 @@ func (b *Bot) Run() {
 				continue // ignore all messages from group
 			}
 
-			s, err := b.subRepository.FindById(update.Message.Chat.ID)
+			s, err := b.subRepository.GetSubscriberById(context.Background(), update.Message.Chat.ID)
 
 			if err != nil {
 				log.Printf("cannot execute 'FindById' from subRepository: %s", err)
@@ -124,7 +131,7 @@ func (b *Bot) Run() {
 }
 
 func (b *Bot) handleBotRemoved() {
-	err := b.metaRepository.SaveGroupId(0)
+	err := b.settingsRepository.SaveGroupID(context.Background(), 0)
 	if err != nil {
 		log.Printf("cannot handle bot removing: %v", err)
 		return
@@ -136,7 +143,7 @@ func (b *Bot) handleBotAdded(update tgbotapi.Update) {
 	for _, member := range update.Message.NewChatMembers {
 		if member.IsBot && member.ID == b.tgBot.Self.ID {
 			groupId := update.Message.Chat.ID
-			err := b.metaRepository.SaveGroupId(int(groupId))
+			err := b.settingsRepository.SaveGroupID(context.Background(), groupId)
 			if err != nil {
 				log.Printf("cannot handle bot adding: %v", err)
 				return
@@ -151,20 +158,21 @@ func (b *Bot) handleBotAdded(update tgbotapi.Update) {
 // if they are not subscribed yet
 func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 	uid := update.Message.From.ID
-	s, err := b.subRepository.FindById(uid)
+	s, err := b.subRepository.GetSubscriberById(context.Background(), uid)
 	if err != nil {
 		return fmt.Errorf("failed to find subscriber with id %d: %w", uid, err)
 	}
 
 	//case1: New subscriber (not found in DB)
 	if s == nil {
-		newSub := repository.Subscriber{
-			Id:        uid,
+		newSub := models.Subscriber{
+			ID:        uid,
 			Nick:      update.Message.From.UserName,
 			FirstName: update.Message.From.FirstName,
 			LastName:  update.Message.From.LastName,
+			JoinedAt:  time.Now(),
 		}
-		err = b.subRepository.AddSubscriber(newSub)
+		err = b.subRepository.SaveSubscriber(context.Background(), &newSub)
 		if err != nil {
 			return fmt.Errorf("failed to add a new subscriber: %w", err)
 		}
@@ -181,7 +189,7 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 	}
 
 	// case3: Reactivating archived subscriber
-	if err := b.subRepository.SetSubscriberArchived(uid, false); err != nil {
+	if err := b.subRepository.SetArchiveSubscriber(context.Background(), uid, false); err != nil {
 		return fmt.Errorf("failed to reactivate a subscriber with id %d : %w", uid, err)
 	}
 	b.sendMessage(uid, b.messages.WelcomeBack)
@@ -191,7 +199,7 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 
 func (b *Bot) handleUnsubscribe(update *tgbotapi.Update) error {
 	uid := update.Message.From.ID
-	if err := b.subRepository.SetSubscriberArchived(uid, true); err != nil {
+	if err := b.subRepository.SetArchiveSubscriber(context.Background(), uid, true); err != nil {
 		return fmt.Errorf("failed to unsubsride a user with id %d : %w", uid, err)
 	}
 	log.Printf("user with user id: %d unsubsribed", uid)
@@ -324,16 +332,16 @@ func (b *Bot) handleHelp(update *tgbotapi.Update) {
 // initParticipants fills participants to the bookGathering filds by
 // converting subscribers and sends them a message with asking a name of a book
 func (b *Bot) initParticipants() error {
-	subs, err := b.subRepository.GetAll()
+	subs, err := b.subRepository.GetAllSubscribers(context.Background())
 	if err != nil {
 		return err
 	}
 	participants := make([]*participant, 0, len(subs))
 	for _, sub := range subs {
-		msg := tgbotapi.NewMessage(sub.Id, b.messages.PleaseSuggestBookTitle)
+		msg := tgbotapi.NewMessage(sub.ID, b.messages.PleaseSuggestBookTitle)
 		b.tgBot.Send(msg)
 		p := &participant{
-			id:        sub.Id,
+			id:        sub.ID,
 			firstName: sub.FirstName,
 			lastName:  sub.LastName,
 			nick:      sub.Nick,
@@ -453,7 +461,7 @@ func (b *Bot) runTelegramPoll() error {
 	if err != nil {
 		return err
 	}
-	subs, err := b.subRepository.GetAll()
+	subs, err := b.subRepository.GetAllSubscribers(context.Background())
 	if err != nil {
 		return err
 	}

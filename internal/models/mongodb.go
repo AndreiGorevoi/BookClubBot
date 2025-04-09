@@ -6,9 +6,8 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// Subscriber представляет участника книжного клуба
 type Subscriber struct {
-	ID        int64     `bson:"_id"` // Telegram ID как первичный ключ
+	ID        int64     `bson:"_id"`
 	FirstName string    `bson:"firstName"`
 	LastName  string    `bson:"lastName"`
 	Nick      string    `bson:"nick"`
@@ -16,7 +15,6 @@ type Subscriber struct {
 	JoinedAt  time.Time `bson:"joinedAt"`
 }
 
-// BookSuggestion представляет предложение книги от участника
 type BookSuggestion struct {
 	SubscriberID int64     `bson:"subscriberId"`
 	BookTitle    string    `bson:"bookTitle"`
@@ -26,7 +24,6 @@ type BookSuggestion struct {
 	SuggestedAt  time.Time `bson:"suggestedAt"`
 }
 
-// Voting представляет информацию о голосовании
 type Voting struct {
 	TelegramPollID    string     `bson:"telegramPollId"`
 	StartedAt         time.Time  `bson:"startedAt"`
@@ -35,7 +32,6 @@ type Voting struct {
 	TotalParticipants int        `bson:"totalParticipants"`
 }
 
-// Winner представляет информацию о книге-победителе
 type Winner struct {
 	BookTitle    string `bson:"bookTitle"`
 	Author       string `bson:"author"`
@@ -44,11 +40,10 @@ type Winner struct {
 	SubscriberID int64  `bson:"subscriberId"`
 }
 
-// BookClubSession представляет сессию книжного клуба
 type BookClubSession struct {
 	ID              primitive.ObjectID `bson:"_id,omitempty"`
 	Name            string             `bson:"name"`
-	Status          string             `bson:"status"` // collecting, voting, completed
+	Status          string             `bson:"status"`
 	StartedAt       time.Time          `bson:"startedAt"`
 	CreatedBy       int64              `bson:"createdBy"`
 	BookSuggestions []BookSuggestion   `bson:"bookSuggestions"`

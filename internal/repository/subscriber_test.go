@@ -163,7 +163,7 @@ func TestArchiveSubscriber(t *testing.T) {
 
 		archiveCtx, archiveCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer archiveCancel()
-		err = repo.ArchiveSubscriber(archiveCtx, 456)
+		err = repo.SetArchiveSubscriber(archiveCtx, 456, true)
 		assert.NoError(t, err)
 
 		// Verify the update
@@ -184,7 +184,7 @@ func TestArchiveSubscriber(t *testing.T) {
 
 		archiveCtx, archiveCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer archiveCancel()
-		err = repo.ArchiveSubscriber(archiveCtx, 456)
+		err = repo.SetArchiveSubscriber(archiveCtx, 456, true)
 		assert.Error(t, err)
 		errorMsg := fmt.Sprintf("subscriber with ID %d not found", 456)
 		assert.ErrorContains(t, err, errorMsg)
@@ -310,9 +310,8 @@ func TestGetSubscriberById(t *testing.T) {
 		getByIdCtx, getByIdCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer getByIdCancel()
 		sub, err := repo.GetSubscriberById(getByIdCtx, 456)
-		assert.Error(t, err)
-		errMsg := fmt.Sprintf("subscriber with id %d not found", 456)
-		assert.ErrorContains(t, err, errMsg)
+
+		assert.NoError(t, err)
 		assert.Nil(t, sub)
 	})
 }
