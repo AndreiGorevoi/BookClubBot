@@ -582,7 +582,7 @@ func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 // isBookAlreadyProposed checks weather a book with provided title is already proposed by another particiapnt
 func (b *Bot) isBookAlreadyProposed(bookTitle string) bool {
 	for _, p := range b.bookGathering.participants {
-		if p.book.title == bookTitle {
+		if p.book != nil && p.book.title == bookTitle {
 			return true
 		}
 	}
