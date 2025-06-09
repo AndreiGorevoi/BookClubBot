@@ -9,6 +9,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    services:
+      mongo:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd="mongo --eval 'db.adminCommand({ ping: 1 })'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      MONGO_URI: "mongodb://mongo:27017"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -17,6 +31,14 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: "1.23"
+
+      - name: Wait for MongoDB to be ready
+        run: |
+          # wait until the service is healthy
+          until docker exec $(docker ps -qf "ancestor=mongo:6.0") mongo --eval "print(\"waited for connection\")"; do
+            echo "Waiting for MongoDB..."
+            sleep 2
+          done
 
       - name: Run tests
         run: go test ./...
