@@ -33,12 +33,15 @@ jobs:
           go-version: "1.23"
 
       - name: Wait for MongoDB to be ready
+        shell: bash
         run: |
-          # wait until the service is healthy
-          until docker exec $(docker ps -qf "ancestor=mongo:6.0") mongo --eval "print(\"waited for connection\")"; do
-            echo "Waiting for MongoDB..."
+          # find the mongo container ID (ancestor=mongo:6.0)
+          container_id=$(docker ps -qf "ancestor=mongo:6.0")
+          until docker exec "$container_id" mongosh --quiet --eval "db.adminCommand({ ping: 1 })"; do
+            echo "Waiting for MongoDB to be healthy…"
             sleep 2
           done
+          echo "MongoDB is up!"
 
       - name: Run tests
         run: go test ./...
