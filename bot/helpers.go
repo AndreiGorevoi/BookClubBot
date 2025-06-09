@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"math/rand"
 	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -58,4 +59,13 @@ func truncateString(input string, limit int) string {
 	// Truncate to the specified limit
 	runes := []rune(input)       // Convert string to a slice of runes (characters)
 	return string(runes[:limit]) // Take only the first 'limit' runes
+}
+
+func shuffleSlice[T any](s []T) []T {
+	copyS := make([]T, len(s))
+	copy(copyS, s)
+	rand.Shuffle(len(copyS), func(i, j int) {
+		copyS[i], copyS[j] = copyS[j], copyS[i]
+	})
+	return copyS
 }

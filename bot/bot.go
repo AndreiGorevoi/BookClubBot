@@ -452,6 +452,12 @@ func (b *Bot) runTelegramPoll() error {
 	if len(books) < 2 {
 		return errors.New("cannot run a poll as there is less than 2 books")
 	}
+
+	if len(books) > 10 {
+		log.Println("cannot use more than ten books in the poll... keeping the first ten")
+		books = books[0:10]
+	}
+
 	votingEnds := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.TimeForTelegramPoll) * time.Second).Hours())
 	txt := fmt.Sprintf("%s.%s", b.messages.ChooseUpToTwoBooks, votingEnds)
 	poll := tgbotapi.NewPoll(b.cfg.GroupId, txt, books...)
@@ -517,15 +523,8 @@ func (b *Bot) extractBooks() []string {
 		name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.book.title, b.messages.AuthorLabel, p.book.author)
 		books = append(books, name)
 	}
+	books = shuffleSlice(books)
 	return books
-}
-
-// getPhotoId returns a tgbotapi.FileID from a participant
-func (b *Bot) getPhotoId(p *participant) tgbotapi.FileID {
-	if p.book.photoId != "" {
-		return tgbotapi.FileID(p.book.photoId)
-	}
-	return ""
 }
 
 // clearPoll refreshes the state of a telegram poll
