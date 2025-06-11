@@ -1,10 +1,13 @@
 package bot
 
 import (
+	"reflect"
 	"slices"
+	"sort"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDefineWinners(t *testing.T) {
@@ -212,4 +215,53 @@ func TestSplitMedia(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestShuffleSlice(t *testing.T) {
+	t.Run("Empty Slice", func(t *testing.T) {
+		s := []int{}
+		shuffled := shuffleSlice(s)
+
+		assert.Empty(t, shuffled)
+	})
+
+	t.Run("Slice with one element", func(t *testing.T) {
+		s := []string{"hello"}
+		shuffled := shuffleSlice(s)
+
+		assert.Equal(t, s, shuffled)
+	})
+
+	t.Run("Elements preservation", func(t *testing.T) {
+		s := []int{1, 2, 3, 4, 5, 6}
+		originalSorted := make([]int, len(s))
+		copy(originalSorted, s)
+		sort.Ints(originalSorted)
+
+		shuffled := shuffleSlice(s)
+		shuffledSorted := make([]int, len(shuffled))
+		copy(shuffledSorted, shuffled)
+		sort.Ints(shuffledSorted)
+
+		assert.Equal(t, originalSorted, shuffledSorted)
+	})
+
+	t.Run("name string", func(t *testing.T) {
+		s := []int{1, 2, 3, 4, 5, 6}
+		original := make([]int, len(s))
+		copy(original, s)
+
+		shuffledCount := 0
+		numAttemps := 10
+
+		for range make([]struct{}, numAttemps) {
+			shuffled := shuffleSlice(s)
+			if !reflect.DeepEqual(shuffled, original) {
+				shuffledCount++
+			}
+		}
+
+		assert.NotEqual(t, 0, shuffledCount)
+	})
+
 }
