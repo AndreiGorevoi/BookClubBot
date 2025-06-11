@@ -19,7 +19,6 @@ type AppConfig struct {
 	NotifyBeforePoll      int `json:"notify_before_poll"`      //seconds
 	LongPollingTimeout    int `json:"long_polling_timeout"`    // seconds
 	TKey                  string
-	DBPath                string `json:"db_path"`
 	MongoURI              string `json:"mongo_uri"`
 	DBName                string `json:"db_name"`
 	LogFileName           string `json:"log_file_name"`
