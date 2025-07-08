@@ -2,6 +2,7 @@ package bot
 
 import (
 	"BookClubBot/config"
+	"BookClubBot/internal/mappers"
 	"BookClubBot/internal/models"
 	"BookClubBot/internal/repository"
 	"BookClubBot/message"
@@ -17,25 +18,27 @@ import (
 )
 
 type Bot struct {
-	cfg                *config.AppConfig
-	tgBot              *tgbotapi.BotAPI
-	bookGathering      *bookGathering
-	telegramPoll       *telegramPoll
-	messages           *message.LocalizedMessages
-	subRepository      *repository.SubscriberRepository
-	settingsRepository *repository.SettingsRepository
+	cfg                       *config.AppConfig
+	tgBot                     *tgbotapi.BotAPI
+	bookGathering             *bookGathering
+	telegramPoll              *telegramPoll
+	messages                  *message.LocalizedMessages
+	subRepository             *repository.SubscriberRepository
+	settingsRepository        *repository.SettingsRepository
+	bookClubSessionRepository *repository.BookClubSessionRepository
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, settingsRepository *repository.SettingsRepository) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, settingsRepository *repository.SettingsRepository, bookClubSessionRepository *repository.BookClubSessionRepository) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &bookGathering{},
 		telegramPoll: &telegramPoll{
 			voted: make(map[int64]struct{}),
 		},
-		messages:           messages,
-		subRepository:      subRepository,
-		settingsRepository: settingsRepository,
+		messages:                  messages,
+		subRepository:             subRepository,
+		settingsRepository:        settingsRepository,
+		bookClubSessionRepository: bookClubSessionRepository,
 	}
 }
 
@@ -213,16 +216,26 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 		b.sendMessage(update.Message.From.ID, b.messages.CannotStartGatheringGroupIdMissing)
 		return nil
 	}
-	if b.bookGathering.active {
+
+	findActivecontext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	activeSession, err := b.bookClubSessionRepository.GetActiveSession(findActivecontext)
+	if err != nil {
+		return err
+	}
+
+	if activeSession != nil {
 		b.sendMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
 		return nil
 	}
 
-	b.bookGathering.active = true
-	err := b.initParticipants()
+	// b.bookGathering.active = true
+	// err = b.initParticipants()
+	activeSession, err = b.createBookClubSession()
 	if err != nil {
-		return fmt.Errorf("failed to init participants: %w", err)
+		return fmt.Errorf("failed to handleStartVote: %w", err)
 	}
+	b.sendInitMessageToAllParticipants(activeSession)
 	b.deadlineNotificationBookGathering(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second)
 	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
 	return nil
@@ -262,7 +275,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 // handleParticipantAnswer handles an answer from a particiapant during a book gathering
 func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 	switch p.status {
-	case bookAsked:
+	case BookAsked:
 		bookTitle := strings.TrimSpace(update.Message.Text)
 		if b.isBookAlreadyProposed(bookTitle) {
 			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.BookAlreadyProposed)
@@ -274,20 +287,20 @@ func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 		}
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
 		b.tgBot.Send(msg)
-		p.status = authorAsked
-	case authorAsked:
+		p.status = AuthorAsked
+	case AuthorAsked:
 		author := update.Message.Text
 		p.book.author = author
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WriteBookDescription)
 		b.tgBot.Send(msg)
-		p.status = descriptionAsked
-	case descriptionAsked:
+		p.status = DescriptionAsked
+	case DescriptionAsked:
 		desc := update.Message.Text
 		p.book.description = desc
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AttachCoverPhoto)
 		b.tgBot.Send(msg)
-		p.status = imageAsked
-	case imageAsked:
+		p.status = ImageAsked
+	case ImageAsked:
 		if update.Message.Photo != nil {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
 			p.book.photoId = photo.FileID
@@ -300,8 +313,8 @@ func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 			b.tgBot.Send(msg)
 		}
 		log.Printf("user: %s %s suggested a book.\n", p.firstName, p.lastName)
-		p.status = finished
-	case finished:
+		p.status = Finished
+	case Finished:
 		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
 		b.tgBot.Send(msg)
 	}
@@ -345,7 +358,7 @@ func (b *Bot) initParticipants() error {
 			firstName: sub.FirstName,
 			lastName:  sub.LastName,
 			nick:      sub.Nick,
-			status:    bookAsked,
+			status:    BookAsked,
 		}
 
 		participants = append(participants, p)
@@ -377,7 +390,7 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 
 func (b *Bot) areAllBooksChosen() bool {
 	for _, p := range b.bookGathering.participants {
-		if p.status != finished {
+		if p.status != Finished {
 			return false
 		}
 	}
@@ -385,12 +398,13 @@ func (b *Bot) areAllBooksChosen() bool {
 }
 
 // msgAboutGatheringBooks sends a message about books are going to be in a poll to the group chat
-func (b *Bot) msgAboutGatheringBooks() {
+func (b *Bot) msgAboutGatheringBooks(activeSession *models.BookClubSession) {
 	if b.cfg.GroupId == 0 {
 		log.Println("cannot send a msg about gathering books as GroupId is not innit")
 		return
 	}
 	// Ensure there are participants with books
+	activeSession.Participants
 	if b.bookGathering == nil || len(b.bookGathering.participants) == 0 {
 		log.Println("No participants or books found.")
 		return
@@ -419,15 +433,20 @@ func (b *Bot) msgAboutGatheringBooks() {
 func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		if b.bookGathering.active {
-			b.runTelegramPollFlow()
+		activeSession, err := b.bookClubSessionRepository.GetActiveSession(context.Background())
+		if err != nil {
+			log.Printf("cannot run telegram poll after a delay: %s", err)
+			return
+		}
+		if activeSession != nil {
+			b.runTelegramPollFlow(activeSession)
 		}
 	}()
 }
 
 // runTelegramPollFlow stops a book gathering and runs a telegram poll
-func (b *Bot) runTelegramPollFlow() {
-	defer b.stopBookGathering()
+func (b *Bot) runTelegramPollFlow(activeSession *models.BookClubSession) {
+	b.stopBookGathering(activeSession)
 	b.msgAboutGatheringBooks()
 
 	err := b.runTelegramPoll()
@@ -535,9 +554,9 @@ func (b *Bot) clearPoll() {
 }
 
 // stopBookGathering stops a book gathering and clreas a bookGathering state
-func (b *Bot) stopBookGathering() {
-	b.bookGathering.active = false
-	b.bookGathering = &bookGathering{}
+func (b *Bot) stopBookGathering(activeSession *models.BookClubSession) {
+	activeSession.BookGathering.Active = false
+	b.bookClubSessionRepository.Update(context.Background(), activeSession)
 }
 
 // deadlineNotificationBookGathering run a separate goroutine that notifies users about a deadline
@@ -545,15 +564,20 @@ func (b *Bot) stopBookGathering() {
 func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		if b.bookGathering.active {
+		activeSession, err := b.bookClubSessionRepository.GetActiveSession(context.Background())
+		if err != nil {
+			log.Printf("cannot notify by deadline of the book gathering as : %s\n", err)
+			return
+		}
+		if activeSession != nil {
 			// send a messega to all participants that have not chosen yet
-			for _, p := range b.bookGathering.participants {
-				if p.status == finished {
+			for _, p := range activeSession.Participants {
+				if p.Status == Finished {
 					continue
 				}
 				//TODO: think about format (handle days, hours, minutes etc. depends on how much time left)
 				txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
-				msg := tgbotapi.NewMessage(p.id, txt)
+				msg := tgbotapi.NewMessage(p.ID, txt)
 				b.tgBot.Send(msg)
 			}
 		}
@@ -599,5 +623,46 @@ func (b *Bot) processCommand(update *tgbotapi.Update, handler func(*tgbotapi.Upd
 	if err := handler(update); err != nil {
 		log.Printf("ERROR: %s", err)
 		b.sendMessage(update.Message.From.ID, b.messages.SomethingWrong)
+	}
+}
+
+func (b *Bot) createBookClubSession() (*models.BookClubSession, error) {
+	createSessionContext, cancelContext := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelContext()
+
+	subs, err := b.subRepository.GetAllSubscribers(createSessionContext)
+	if err != nil {
+		return nil, err
+	}
+
+	participants := mappers.SubscribersToParticipants(subs)
+	currentTime := time.Now()
+	bookSession := &models.BookClubSession{
+		Name:         currentTime.Format("January - 2006"),
+		Date:         currentTime,
+		Active:       true,
+		Participants: participants,
+		BookGathering: models.BookGathering{
+			Active:         true,
+			BooksSuggested: 0,
+			TotalBooks:     0,
+		},
+	}
+	if err := b.bookClubSessionRepository.Create(createSessionContext, bookSession); err != nil {
+		return nil, err
+	}
+	return bookSession, nil
+}
+
+func (b *Bot) sendInitMessageToAllParticipants(activeSession *models.BookClubSession) {
+	participants := activeSession.Participants
+
+	if participants == nil {
+		return
+	}
+
+	for _, p := range participants {
+		msg := tgbotapi.NewMessage(p.ID, b.messages.PleaseSuggestBookTitle)
+		b.tgBot.Send(msg)
 	}
 }

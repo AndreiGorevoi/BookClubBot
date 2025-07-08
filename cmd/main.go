@@ -43,6 +43,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	b := bot.NewBot(cfg, msg, subRepository, settingsRepository)
+	bookClubSessionRepository, err := repository.NewBookClubSessionRepository(db)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	b := bot.NewBot(cfg, msg, subRepository, settingsRepository, bookClubSessionRepository)
 	b.Run()
 }

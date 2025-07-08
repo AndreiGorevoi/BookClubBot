@@ -15,38 +15,43 @@ type Subscriber struct {
 	JoinedAt  time.Time `bson:"joinedAt"`
 }
 
-type BookSuggestion struct {
-	SubscriberID int64     `bson:"subscriberId"`
-	BookTitle    string    `bson:"bookTitle"`
-	Author       string    `bson:"author"`
-	Description  string    `bson:"description"`
-	PhotoID      string    `bson:"photoId"`
-	SuggestedAt  time.Time `bson:"suggestedAt"`
-}
-
-type Voting struct {
-	TelegramPollID    string     `bson:"telegramPollId"`
-	StartedAt         time.Time  `bson:"startedAt"`
-	CompletedAt       *time.Time `bson:"completedAt"`
-	ParticipantsVoted int        `bson:"participantsVoted"`
-	TotalParticipants int        `bson:"totalParticipants"`
-}
-
-type Winner struct {
-	BookTitle    string `bson:"bookTitle"`
-	Author       string `bson:"author"`
-	Description  string `bson:"description"`
-	PhotoID      string `bson:"photoId"`
-	SubscriberID int64  `bson:"subscriberId"`
-}
-
+// BookClubSession represents a monthly book-club session
 type BookClubSession struct {
-	ID              primitive.ObjectID `bson:"_id,omitempty"`
-	Name            string             `bson:"name"`
-	Status          string             `bson:"status"`
-	StartedAt       time.Time          `bson:"startedAt"`
-	CreatedBy       int64              `bson:"createdBy"`
-	BookSuggestions []BookSuggestion   `bson:"bookSuggestions"`
-	Voting          Voting             `bson:"voting"`
-	Winner          Winner             `bson:"winner"`
+	ID            primitive.ObjectID `bson:"_id,omitempty"`
+	Name          string             `bson:"name"`
+	Date          time.Time          `bson:"date"`
+	Active        bool               `bson:"active"`
+	TelegramPoll  TelegramPoll       `bson:"telegramPoll"`
+	BookGathering BookGathering      `bson:"bookGathering"`
+	Participants  []Participant      `bson:"participants"`
+}
+
+// TelegramPoll holds poll data from Telegram
+type TelegramPoll struct {
+	ID         string `bson:"id"`
+	Active     bool   `bson:"active"`
+	Voted      int    `bson:"voted"`
+	TotalVotes int    `bson:"totalVotes"`
+}
+
+// BookGathering holds info about suggested books
+type BookGathering struct {
+	Active         bool `bson:"active"`
+	BooksSuggested int  `bson:"booksSuggested"`
+	TotalBooks     int  `bson:"totalBooks"`
+}
+
+// Participant is a user taking part in the session
+type Participant struct {
+	ID       int64  `bson:"id"`
+	NickName string `bson:"nickName"`
+	Status   int    `bson:"status"`
+	Book     Book   `bson:"book"`
+}
+
+// Book describes a suggested or chosen book
+type Book struct {
+	Name   string `bson:"name"`
+	Author string `bson:"author"`
+	Image  string `bson:"image"`
 }

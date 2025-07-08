@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	started = iota
-	bookAsked
-	authorAsked
-	descriptionAsked
-	imageAsked
-	finished
+	Started = iota
+	BookAsked
+	AuthorAsked
+	DescriptionAsked
+	ImageAsked
+	Finished
 
 	defaultImagePath = "assets/book-with-question-mark.jpg"
 )
