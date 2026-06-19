@@ -15,12 +15,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	logFile, err := os.OpenFile(cfg.LogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer logFile.Close()
-	log.SetOutput(logFile)
+	// Log to stdout so the platform (Railway, Docker, etc.) captures logs.
+	log.SetOutput(os.Stdout)
 
 	msg, err := message.LoadMessaged()
 	if err != nil {

@@ -21,7 +21,6 @@ type AppConfig struct {
 	TKey                  string
 	MongoURI              string `json:"mongo_uri"`
 	DBName                string `json:"db_name"`
-	LogFileName           string `json:"log_file_name"`
 	DebugMode             bool   `json:"debug_mode"`
 }
 
