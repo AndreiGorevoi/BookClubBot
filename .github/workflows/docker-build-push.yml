@@ -71,10 +71,18 @@ jobs:
 
       - name: Trigger Railway sandbox redeploy
         continue-on-error: true
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: 1230437c-b600-4a1e-abf8-095fe45256b4
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SANDBOX_SERVICE_ID }}
         run: |
-          npm install -g @railway/cli@3
-          railway redeploy --service "$RAILWAY_SERVICE_ID" --yes
+          curl --fail --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            --header "Content-Type: application/json" \
+            --data '{
+              "query": "mutation environmentTriggersDeploy($input: EnvironmentTriggersDeployInput!) { environmentTriggersDeploy(input: $input) }",
+              "variables": {
+                "input": {
+                  "projectId": "1230437c-b600-4a1e-abf8-095fe45256b4",
+                  "environmentId": "dad43f6e-5e42-495f-8c4a-af1c60cab6ee",
+                  "serviceId": "02e9cc0f-533e-4bf2-bd6f-97651b73d2f9"
+                }
+              }
+            }'
