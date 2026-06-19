@@ -61,3 +61,19 @@ jobs:
           context: .
           push: true
           tags: beskar18/book-club-bot:${{ github.ref_name }}
+
+      - name: Tag as latest (release tags only, no pre-releases)
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          docker pull beskar18/book-club-bot:${{ github.ref_name }}
+          docker tag beskar18/book-club-bot:${{ github.ref_name }} beskar18/book-club-bot:latest
+          docker push beskar18/book-club-bot:latest
+
+      - name: Trigger Railway sandbox redeploy
+        continue-on-error: true
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SANDBOX_SERVICE_ID }}
+        run: |
+          npm install -g @railway/cli@3
+          railway redeploy --service "$RAILWAY_SERVICE_ID" --environment sandbox --yes
