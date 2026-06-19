@@ -77,7 +77,8 @@ Work follows an issue → PR → review flow:
 2. **Implement** on a dedicated branch (`fix/<slug>` or `feat/<slug>`)
 3. **Open a PR** that references the issue with `Closes #N` as the first line of the PR body — GitHub will auto-close the issue on merge and link them bidirectionally
 4. **Run `/finish-issue`** — triggers an independent code review that posts findings as inline PR comments, then hands off to the human for merge
-5. **Never push directly to `main`**
+5. **Address review findings**, then **reply to every inline PR comment** — for each finding, post a reply with the fix commit SHA and a one-line summary of what changed, or an explicit reason why it was skipped
+6. **Never push directly to `main`**
 
 Every PR body must follow this structure:
 
