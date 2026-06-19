@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -17,6 +18,7 @@ import (
 )
 
 type Bot struct {
+	mu                 sync.Mutex
 	cfg                *config.AppConfig
 	tgBot              *tgbotapi.BotAPI
 	bookGathering      *bookGathering
@@ -117,13 +119,16 @@ func (b *Bot) Run() {
 		}
 
 		if update.PollAnswer != nil {
+			b.mu.Lock()
 			if !b.telegramPoll.isActive {
-				continue // do nothing as there is no active poll
+				b.mu.Unlock()
+				continue
 			}
-
-			// count all unique votes
 			b.telegramPoll.voted[update.PollAnswer.User.ID] = struct{}{}
-			if len(b.telegramPoll.voted) >= b.telegramPoll.participants {
+			shouldClose := len(b.telegramPoll.voted) >= b.telegramPoll.participants
+			b.mu.Unlock()
+
+			if shouldClose {
 				b.closeTelegramPoll()
 			}
 		}
@@ -230,16 +235,18 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 
 // handleUserMsg handles any message from a user
 func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
-	var msg tgbotapi.MessageConfig
 	currentUserId := update.Message.From.ID
-	if !b.bookGathering.active {
-		msg = tgbotapi.NewMessage(currentUserId, b.messages.VotingNotStartedOrEnded)
-		b.tgBot.Send(msg)
+
+	b.mu.Lock()
+	active := b.bookGathering.active
+	b.mu.Unlock()
+
+	if !active {
+		b.sendMessage(currentUserId, b.messages.VotingNotStartedOrEnded)
 		return
 	}
 
 	var particiapant *participant
-	// check whether the particiapant is a participant of a poll
 	for _, p := range b.bookGathering.participants {
 		if p.id == currentUserId {
 			particiapant = p
@@ -247,79 +254,98 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 		}
 	}
 	if particiapant == nil {
-		msg = tgbotapi.NewMessage(currentUserId, b.messages.NotParticipantCurrentVoting)
-		b.tgBot.Send(msg)
+		b.sendMessage(currentUserId, b.messages.NotParticipantCurrentVoting)
 		return
 	}
 
 	b.handleParticipantAnswer(particiapant, update)
 
-	if b.areAllBooksChosen() && b.bookGathering.active {
+	b.mu.Lock()
+	allDone := b.areAllBooksChosen()
+	stillActive := b.bookGathering.active
+	b.mu.Unlock()
+
+	if allDone && stillActive {
 		b.runTelegramPollFlow()
 	}
 }
 
 // handleParticipantAnswer handles an answer from a particiapant during a book gathering
 func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
-	switch p.status {
+	b.mu.Lock()
+	status := p.status
+	b.mu.Unlock()
+
+	switch status {
 	case bookAsked:
 		bookTitle := strings.TrimSpace(update.Message.Text)
 		if b.isBookAlreadyProposed(bookTitle) {
-			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.BookAlreadyProposed)
-			b.tgBot.Send(msg)
+			b.sendMessage(update.Message.From.ID, b.messages.BookAlreadyProposed)
 			return
 		}
-		p.book = &book{
-			title: bookTitle,
-		}
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
-		b.tgBot.Send(msg)
+		b.mu.Lock()
+		p.book = &book{title: bookTitle}
 		p.status = authorAsked
+		b.mu.Unlock()
+		b.sendMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
+
 	case authorAsked:
-		author := update.Message.Text
-		p.book.author = author
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.WriteBookDescription)
-		b.tgBot.Send(msg)
+		b.mu.Lock()
+		p.book.author = update.Message.Text
 		p.status = descriptionAsked
+		b.mu.Unlock()
+		b.sendMessage(update.Message.From.ID, b.messages.WriteBookDescription)
+
 	case descriptionAsked:
-		desc := update.Message.Text
-		p.book.description = desc
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.AttachCoverPhoto)
-		b.tgBot.Send(msg)
+		b.mu.Lock()
+		p.book.description = update.Message.Text
 		p.status = imageAsked
+		b.mu.Unlock()
+		b.sendMessage(update.Message.From.ID, b.messages.AttachCoverPhoto)
+
 	case imageAsked:
+		b.mu.Lock()
 		if update.Message.Photo != nil {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
 			p.book.photoId = photo.FileID
+		}
+		p.status = finished
+		b.mu.Unlock()
 
-			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.BookAddedToNextVoting)
-			b.tgBot.Send(msg)
+		if update.Message.Photo != nil {
+			b.sendMessage(update.Message.From.ID, b.messages.BookAddedToNextVoting)
 		} else {
-			// If no photo is provided, skip to the next step
-			msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.ImageMissingBookAdded)
-			b.tgBot.Send(msg)
+			b.sendMessage(update.Message.From.ID, b.messages.ImageMissingBookAdded)
 		}
 		log.Printf("user: %s %s suggested a book.\n", p.firstName, p.lastName)
-		p.status = finished
+
 	case finished:
-		msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
-		b.tgBot.Send(msg)
+		b.sendMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
 	}
 }
 
 // handleSkip handles a '/skip' message from a user due remove them from an ongoing book gathering
 func (b *Bot) handleSkip(update *tgbotapi.Update) {
 	userId := update.Message.From.ID
-	if !b.bookGathering.active {
+
+	b.mu.Lock()
+	active := b.bookGathering.active
+	isParticipant := b.bookGathering.isParticipant(userId)
+	b.mu.Unlock()
+
+	if !active {
 		b.sendMessage(userId, b.messages.VotingNotStartedOrEnded)
 		return
 	}
-	if !b.bookGathering.isParticipant(userId) {
+	if !isParticipant {
 		b.sendMessage(userId, b.messages.AlreadyDeclinedSuggestion)
 		return
 	}
 
+	b.mu.Lock()
 	b.bookGathering.removeParticipant(userId)
+	b.mu.Unlock()
+
 	b.sendMessage(userId, b.messages.UnableToSuggestBook)
 	log.Printf("user: %d skiped a book gathering.\n", userId)
 }
@@ -390,7 +416,6 @@ func (b *Bot) msgAboutGatheringBooks() {
 		log.Println("cannot send a msg about gathering books as GroupId is not innit")
 		return
 	}
-	// Ensure there are participants with books
 	if b.bookGathering == nil || len(b.bookGathering.participants) == 0 {
 		log.Println("No participants or books found.")
 		return
@@ -399,15 +424,11 @@ func (b *Bot) msgAboutGatheringBooks() {
 	batches := splitMedia(b.bookGathering.participants, 10)
 
 	for i, batch := range batches {
-		// skip whole process if there is less than 2 books
 		if i == 0 && len(batch) < 2 {
 			log.Println("cannot send message about gathered book as it less than 2")
 			return
 		}
-		// Create the media group message
 		msg := tgbotapi.NewMediaGroup(b.cfg.GroupId, batch)
-
-		// Send the media group
 		_, err := b.tgBot.Send(msg)
 		if err != nil {
 			log.Printf("ERROR: %s\n", err)
@@ -419,14 +440,27 @@ func (b *Bot) msgAboutGatheringBooks() {
 func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		if b.bookGathering.active {
+		b.mu.Lock()
+		active := b.bookGathering.active
+		b.mu.Unlock()
+		if active {
 			b.runTelegramPollFlow()
 		}
 	}()
 }
 
-// runTelegramPollFlow stops a book gathering and runs a telegram poll
+// runTelegramPollFlow stops a book gathering and runs a telegram poll.
+// It is safe to call concurrently: only the first call proceeds, subsequent
+// calls that race with it see active==false and return immediately.
 func (b *Bot) runTelegramPollFlow() {
+	b.mu.Lock()
+	if !b.bookGathering.active {
+		b.mu.Unlock()
+		return
+	}
+	b.bookGathering.active = false
+	b.mu.Unlock()
+
 	defer b.stopBookGathering()
 	b.msgAboutGatheringBooks()
 
@@ -442,12 +476,17 @@ func (b *Bot) runTelegramPollFlow() {
 
 // runTelegramPoll creates and starts a poll for choosing a book in the group
 func (b *Bot) runTelegramPoll() error {
+	b.mu.Lock()
 	if b.cfg.GroupId == 0 {
+		b.mu.Unlock()
 		return fmt.Errorf("cannot run telegram poll as groupId is not innit")
 	}
 	if b.telegramPoll.isActive {
+		b.mu.Unlock()
 		return errors.New("cannot run a poll as there is a still active poll")
 	}
+	b.mu.Unlock()
+
 	books := b.extractBooks()
 	if len(books) < 2 {
 		return errors.New("cannot run a poll as there is less than 2 books")
@@ -472,9 +511,11 @@ func (b *Bot) runTelegramPoll() error {
 		return err
 	}
 
+	b.mu.Lock()
 	b.telegramPoll.isActive = true
 	b.telegramPoll.pollId = msg.MessageID
 	b.telegramPoll.participants = len(subs)
+	b.mu.Unlock()
 	return nil
 }
 
@@ -486,22 +527,31 @@ func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
 	}()
 }
 
-// closeTelegramPoll stops a poll and anounce the winner
+// closeTelegramPoll stops a poll and announces the winner.
+// It is safe to call concurrently: only the first call proceeds, subsequent
+// calls that race with it see isActive==false and return immediately.
 func (b *Bot) closeTelegramPoll() {
+	b.mu.Lock()
 	if b.cfg.GroupId == 0 {
+		b.mu.Unlock()
 		log.Println("cannot close a telegram poll as GroupId is not innit")
 		return
 	}
-
 	if !b.telegramPoll.isActive {
+		b.mu.Unlock()
 		log.Print("there is not an active poll, cannot close it")
 		return
 	}
+	pollId := b.telegramPoll.pollId
+	groupId := b.cfg.GroupId
+	b.telegramPoll.isActive = false
+	b.mu.Unlock()
+
 	defer b.clearPoll()
 	finishPoll := tgbotapi.StopPollConfig{
 		BaseEdit: tgbotapi.BaseEdit{
-			ChatID:    b.cfg.GroupId,         // The chat ID where the poll was sent
-			MessageID: b.telegramPoll.pollId, // The message ID of the poll
+			ChatID:    groupId,
+			MessageID: pollId,
 		},
 	}
 	res, err := b.tgBot.StopPoll(finishPoll)
@@ -514,9 +564,13 @@ func (b *Bot) closeTelegramPoll() {
 
 // extractBooks gains a slice of string from a books that participants suggested
 func (b *Bot) extractBooks() []string {
-	books := make([]string, 0, len(b.bookGathering.participants))
+	b.mu.Lock()
+	participants := make([]*participant, len(b.bookGathering.participants))
+	copy(participants, b.bookGathering.participants)
+	b.mu.Unlock()
 
-	for _, p := range b.bookGathering.participants {
+	books := make([]string, 0, len(participants))
+	for _, p := range participants {
 		if p.book == nil {
 			continue
 		}
@@ -529,15 +583,18 @@ func (b *Bot) extractBooks() []string {
 
 // clearPoll refreshes the state of a telegram poll
 func (b *Bot) clearPoll() {
+	b.mu.Lock()
 	b.telegramPoll = &telegramPoll{
 		voted: make(map[int64]struct{}),
 	}
+	b.mu.Unlock()
 }
 
-// stopBookGathering stops a book gathering and clreas a bookGathering state
+// stopBookGathering stops a book gathering and clears a bookGathering state
 func (b *Bot) stopBookGathering() {
-	b.bookGathering.active = false
+	b.mu.Lock()
 	b.bookGathering = &bookGathering{}
+	b.mu.Unlock()
 }
 
 // deadlineNotificationBookGathering run a separate goroutine that notifies users about a deadline
@@ -545,17 +602,23 @@ func (b *Bot) stopBookGathering() {
 func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		if b.bookGathering.active {
-			// send a messega to all participants that have not chosen yet
-			for _, p := range b.bookGathering.participants {
-				if p.status == finished {
-					continue
-				}
-				//TODO: think about format (handle days, hours, minutes etc. depends on how much time left)
-				txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
-				msg := tgbotapi.NewMessage(p.id, txt)
-				b.tgBot.Send(msg)
+
+		b.mu.Lock()
+		if !b.bookGathering.active {
+			b.mu.Unlock()
+			return
+		}
+		toNotify := make([]int64, 0, len(b.bookGathering.participants))
+		for _, p := range b.bookGathering.participants {
+			if p.status != finished {
+				toNotify = append(toNotify, p.id)
 			}
+		}
+		b.mu.Unlock()
+
+		txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
+		for _, id := range toNotify {
+			b.sendMessage(id, txt)
 		}
 	}()
 }
@@ -564,17 +627,21 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 // of a telegram poll. Delay is taken from a config
 func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 	go func() {
-		if b.cfg.GroupId == 0 {
-			log.Println("cannot announce the deadline as GroupId is not innit")
-			return
-		}
 		time.Sleep(delay)
-		if !b.telegramPoll.isActive {
+
+		b.mu.Lock()
+		if b.cfg.GroupId == 0 || !b.telegramPoll.isActive {
+			if b.cfg.GroupId == 0 {
+				log.Println("cannot announce the deadline as GroupId is not innit")
+			}
+			b.mu.Unlock()
 			return
 		}
+		groupId := b.cfg.GroupId
+		b.mu.Unlock()
+
 		txt := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
-		msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
-		b.tgBot.Send(msg)
+		b.sendMessage(groupId, txt)
 	}()
 }
 
