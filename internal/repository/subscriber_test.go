@@ -196,72 +196,97 @@ func TestGetAllSubscribers(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	mongoDB, clear := mongo_helpers.CreateTestMongoDB(t)
-	defer cleanSubscriber(clear, mongoDB)
+	t.Run("returns only active subscribers", func(t *testing.T) {
+		mongoDB, clear := mongo_helpers.CreateTestMongoDB(t)
+		defer cleanSubscriber(clear, mongoDB)
 
-	repo, err := NewSubscriberRepository(mongoDB)
-	assert.NoError(t, err)
+		repo, err := NewSubscriberRepository(mongoDB)
+		assert.NoError(t, err)
 
-	joinedTime := time.Now().UTC().Truncate(time.Millisecond)
-	subscribers := []any{
-		&models.Subscriber{
-			ID:        123,
-			FirstName: "Alex",
-			LastName:  "Caruso",
-			Nick:      "Defenator",
-			JoinedAt:  joinedTime,
-		},
-		&models.Subscriber{
-			ID:        234,
-			FirstName: "Nick",
-			LastName:  "Jepherson",
-			Nick:      "Nicky",
-			JoinedAt:  joinedTime.Add(1 * time.Hour),
-		},
-		&models.Subscriber{
-			ID:        345,
-			FirstName: "Joel",
-			LastName:  "Embid",
-			Nick:      "Knee",
-			JoinedAt:  joinedTime.Add(2 * time.Hour),
-		},
-	}
-
-	// Insert multiple subscribers
-	insertCtx, insertCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer insertCancel()
-	result, err := repo.db.Collection(subs_collection).InsertMany(insertCtx, subscribers)
-	assert.NoError(t, err)
-	assert.Len(t, result.InsertedIDs, 3)
-
-	// Test GetAllSubscribers
-	getAllCtx, getAllCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer getAllCancel()
-	retrievedSubs, err := repo.GetAllSubscribers(getAllCtx)
-	assert.NoError(t, err)
-	assert.Len(t, retrievedSubs, 3)
-
-	// Verify each subscriber was retrieved with correct data
-	for _, sub := range retrievedSubs {
-		assert.Contains(t, []int64{123, 234, 345}, sub.ID)
-		switch sub.ID {
-		case 123:
-			assert.Equal(t, "Alex", sub.FirstName)
-			assert.Equal(t, "Caruso", sub.LastName)
-			assert.Equal(t, "Defenator", sub.Nick)
-			assert.Equal(t, joinedTime.Unix(), sub.JoinedAt.Unix())
-		case 234:
-			assert.Equal(t, "Nick", sub.FirstName)
-			assert.Equal(t, "Jepherson", sub.LastName)
-			assert.Equal(t, "Nicky", sub.Nick)
-			assert.Equal(t, joinedTime.Add(1*time.Hour).Unix(), sub.JoinedAt.Unix())
-		case 345:
-			assert.Equal(t, "Joel", sub.FirstName)
-			assert.Equal(t, "Embid", sub.LastName)
-			assert.Equal(t, "Knee", sub.Nick)
-			assert.Equal(t, joinedTime.Add(2*time.Hour).Unix(), sub.JoinedAt.Unix())
+		joinedTime := time.Now().UTC().Truncate(time.Millisecond)
+		subscribers := []any{
+			&models.Subscriber{
+				ID:        123,
+				FirstName: "Alex",
+				LastName:  "Caruso",
+				Nick:      "Defenator",
+				JoinedAt:  joinedTime,
+			},
+			&models.Subscriber{
+				ID:        234,
+				FirstName: "Nick",
+				LastName:  "Jepherson",
+				Nick:      "Nicky",
+				JoinedAt:  joinedTime.Add(1 * time.Hour),
+			},
+			&models.Subscriber{
+				ID:        345,
+				FirstName: "Joel",
+				LastName:  "Embid",
+				Nick:      "Knee",
+				JoinedAt:  joinedTime.Add(2 * time.Hour),
+			},
 		}
-	}
+
+		insertCtx, insertCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer insertCancel()
+		result, err := repo.db.Collection(subs_collection).InsertMany(insertCtx, subscribers)
+		assert.NoError(t, err)
+		assert.Len(t, result.InsertedIDs, 3)
+
+		getAllCtx, getAllCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer getAllCancel()
+		retrievedSubs, err := repo.GetAllSubscribers(getAllCtx)
+		assert.NoError(t, err)
+		assert.Len(t, retrievedSubs, 3)
+
+		for _, sub := range retrievedSubs {
+			assert.Contains(t, []int64{123, 234, 345}, sub.ID)
+			switch sub.ID {
+			case 123:
+				assert.Equal(t, "Alex", sub.FirstName)
+				assert.Equal(t, "Caruso", sub.LastName)
+				assert.Equal(t, "Defenator", sub.Nick)
+				assert.Equal(t, joinedTime.Unix(), sub.JoinedAt.Unix())
+			case 234:
+				assert.Equal(t, "Nick", sub.FirstName)
+				assert.Equal(t, "Jepherson", sub.LastName)
+				assert.Equal(t, "Nicky", sub.Nick)
+				assert.Equal(t, joinedTime.Add(1*time.Hour).Unix(), sub.JoinedAt.Unix())
+			case 345:
+				assert.Equal(t, "Joel", sub.FirstName)
+				assert.Equal(t, "Embid", sub.LastName)
+				assert.Equal(t, "Knee", sub.Nick)
+				assert.Equal(t, joinedTime.Add(2*time.Hour).Unix(), sub.JoinedAt.Unix())
+			}
+		}
+	})
+
+	t.Run("excludes archived subscribers", func(t *testing.T) {
+		mongoDB, clear := mongo_helpers.CreateTestMongoDB(t)
+		defer cleanSubscriber(clear, mongoDB)
+
+		repo, err := NewSubscriberRepository(mongoDB)
+		assert.NoError(t, err)
+
+		joinedTime := time.Now().UTC().Truncate(time.Millisecond)
+		subscribers := []any{
+			&models.Subscriber{ID: 1, FirstName: "Active", Archived: false, JoinedAt: joinedTime},
+			&models.Subscriber{ID: 2, FirstName: "Archived", Archived: true, JoinedAt: joinedTime},
+		}
+
+		insertCtx, insertCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer insertCancel()
+		_, err = repo.db.Collection(subs_collection).InsertMany(insertCtx, subscribers)
+		assert.NoError(t, err)
+
+		getAllCtx, getAllCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer getAllCancel()
+		retrievedSubs, err := repo.GetAllSubscribers(getAllCtx)
+		assert.NoError(t, err)
+		assert.Len(t, retrievedSubs, 1)
+		assert.Equal(t, int64(1), retrievedSubs[0].ID)
+	})
 }
 
 func TestGetSubscriberById(t *testing.T) {

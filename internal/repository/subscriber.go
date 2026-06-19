@@ -56,7 +56,7 @@ func (s *SubscriberRepository) SetArchiveSubscriber(ctx context.Context, subscri
 
 func (s *SubscriberRepository) GetAllSubscribers(ctx context.Context) ([]*models.Subscriber, error) {
 	collection := s.db.Collection(subs_collection)
-	cursor, err := collection.Find(ctx, bson.M{})
+	cursor, err := collection.Find(ctx, bson.M{"archived": false})
 	if err != nil {
 		return nil, err
 	}
