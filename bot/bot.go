@@ -22,11 +22,11 @@ type Bot struct {
 	bookGathering      *bookGathering
 	telegramPoll       *telegramPoll
 	messages           *message.LocalizedMessages
-	subRepository      *repository.SubscriberRepository
-	settingsRepository *repository.SettingsRepository
+	subRepository      repository.SubscriberRepo
+	settingsRepository repository.SettingsRepo
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, settingsRepository *repository.SettingsRepository) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository repository.SubscriberRepo, settingsRepository repository.SettingsRepo) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &bookGathering{},
