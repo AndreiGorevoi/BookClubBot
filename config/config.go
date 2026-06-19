@@ -37,8 +37,13 @@ func LoadConfig() (*AppConfig, error) {
 	if tKey == "" {
 		return nil, fmt.Errorf("cannot find telegrammApiKey env varaible")
 	}
-
 	cfg.TKey = tKey
+
+	// Railway's MongoDB plugin injects MONGO_URL; prefer it over the JSON value.
+	if mongoURL := os.Getenv("MONGO_URL"); mongoURL != "" {
+		cfg.MongoURI = mongoURL
+	}
+
 	return cfg, nil
 }
 

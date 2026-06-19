@@ -60,4 +60,13 @@ jobs:
         with:
           context: .
           push: true
-          tags: beskar18/book-club-bot:${{ github.ref_name }}
+          tags: |
+            beskar18/book-club-bot:${{ github.ref_name }}
+            beskar18/book-club-bot:latest
+
+      - name: Trigger Railway sandbox redeploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          npm install -g @railway/cli
+          railway redeploy --service ${{ secrets.RAILWAY_SANDBOX_SERVICE_ID }} --environment sandbox --yes
