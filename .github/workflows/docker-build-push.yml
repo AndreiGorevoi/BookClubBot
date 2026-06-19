@@ -76,4 +76,4 @@ jobs:
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SANDBOX_SERVICE_ID }}
         run: |
           npm install -g @railway/cli@3
-          railway redeploy --service "$RAILWAY_SERVICE_ID" --environment sandbox --yes
+          railway redeploy --service "$RAILWAY_SERVICE_ID" --yes
