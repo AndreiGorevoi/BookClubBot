@@ -82,13 +82,10 @@ jobs:
             --header "Authorization: Bearer $RAILWAY_TOKEN" \
             --header "Content-Type: application/json" \
             --data '{
-              "query": "mutation environmentTriggersDeploy($input: EnvironmentTriggersDeployInput!) { environmentTriggersDeploy(input: $input) }",
+              "query": "mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) { serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId) }",
               "variables": {
-                "input": {
-                  "projectId": "1230437c-b600-4a1e-abf8-095fe45256b4",
-                  "environmentId": "dad43f6e-5e42-495f-8c4a-af1c60cab6ee",
-                  "serviceId": "02e9cc0f-533e-4bf2-bd6f-97651b73d2f9"
-                }
+                "environmentId": "dad43f6e-5e42-495f-8c4a-af1c60cab6ee",
+                "serviceId": "02e9cc0f-533e-4bf2-bd6f-97651b73d2f9"
               }
             }')
           echo "$response"
