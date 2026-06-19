@@ -14,7 +14,6 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type Bot struct {
@@ -24,11 +23,11 @@ type Bot struct {
 	bookGathering      *bookGathering
 	telegramPoll       *telegramPoll
 	messages           *message.LocalizedMessages
-	subRepository      *repository.SubscriberRepository
-	settingsRepository *repository.SettingsRepository
+	subRepository      subscriberRepo
+	settingsRepository settingsRepo
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository *repository.SubscriberRepository, settingsRepository *repository.SettingsRepository) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository subscriberRepo, settingsRepository settingsRepo) *Bot {
 	return &Bot{
 		cfg:           cfg,
 		bookGathering: &bookGathering{},
@@ -53,7 +52,7 @@ func (b *Bot) Run() {
 	b.tgBot.Debug = b.cfg.DebugMode
 	groupId, err := b.settingsRepository.GetGroupId(context.Background())
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
+		if errors.Is(err, repository.ErrNotFound) {
 			if err := b.settingsRepository.SaveGroupID(context.Background(), 0); err != nil {
 				log.Fatalf("error during setting a group id: '%v'", err)
 			}

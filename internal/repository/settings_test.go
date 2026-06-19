@@ -129,7 +129,7 @@ func TestSettingsRepository(t *testing.T) {
 			defer cancel()
 			groupId, err := repo.GetGroupId(ctx)
 			assert.Error(t, err)
-			assert.True(t, errors.Is(err, mongo.ErrNoDocuments), "Expected mongo.ErrNoDocuments, got: %v", err)
+			assert.True(t, errors.Is(err, ErrNotFound), "Expected ErrNotFound, got: %v", err)
 			assert.Equal(t, int64(0), groupId)
 		})
 	})
