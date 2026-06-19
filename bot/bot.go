@@ -239,6 +239,11 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 
 	b.mu.Lock()
 	active := b.bookGathering.active
+	var participants []*participant
+	if active {
+		participants = make([]*participant, len(b.bookGathering.participants))
+		copy(participants, b.bookGathering.participants)
+	}
 	b.mu.Unlock()
 
 	if !active {
@@ -247,7 +252,7 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 	}
 
 	var particiapant *participant
-	for _, p := range b.bookGathering.participants {
+	for _, p := range participants {
 		if p.id == currentUserId {
 			particiapant = p
 			break
@@ -279,14 +284,17 @@ func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
 	switch status {
 	case bookAsked:
 		bookTitle := strings.TrimSpace(update.Message.Text)
-		if b.isBookAlreadyProposed(bookTitle) {
+		b.mu.Lock()
+		alreadyProposed := b.isBookAlreadyProposed(bookTitle)
+		if !alreadyProposed {
+			p.book = &book{title: bookTitle}
+			p.status = authorAsked
+		}
+		b.mu.Unlock()
+		if alreadyProposed {
 			b.sendMessage(update.Message.From.ID, b.messages.BookAlreadyProposed)
 			return
 		}
-		b.mu.Lock()
-		p.book = &book{title: bookTitle}
-		p.status = authorAsked
-		b.mu.Unlock()
 		b.sendMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
 
 	case authorAsked:
@@ -416,21 +424,38 @@ func (b *Bot) msgAboutGatheringBooks() {
 		log.Println("cannot send a msg about gathering books as GroupId is not innit")
 		return
 	}
-	if b.bookGathering == nil || len(b.bookGathering.participants) == 0 {
+
+	b.mu.Lock()
+	groupId := b.cfg.GroupId
+	var mediaItems []interface{}
+	for _, p := range b.bookGathering.participants {
+		if p.book == nil {
+			continue
+		}
+		img := p.bookImage()
+		img.Caption = truncateString(p.bookCaption(), 1024)
+		img.ParseMode = "Markdown"
+		mediaItems = append(mediaItems, img)
+	}
+	b.mu.Unlock()
+
+	if len(mediaItems) == 0 {
 		log.Println("No participants or books found.")
 		return
 	}
 
-	batches := splitMedia(b.bookGathering.participants, 10)
-
-	for i, batch := range batches {
+	for i := 0; i < len(mediaItems); i += 10 {
+		end := i + 10
+		if end > len(mediaItems) {
+			end = len(mediaItems)
+		}
+		batch := mediaItems[i:end]
 		if i == 0 && len(batch) < 2 {
 			log.Println("cannot send message about gathered book as it less than 2")
 			return
 		}
-		msg := tgbotapi.NewMediaGroup(b.cfg.GroupId, batch)
-		_, err := b.tgBot.Send(msg)
-		if err != nil {
+		msg := tgbotapi.NewMediaGroup(groupId, batch)
+		if _, err := b.tgBot.Send(msg); err != nil {
 			log.Printf("ERROR: %s\n", err)
 		}
 	}
@@ -565,20 +590,15 @@ func (b *Bot) closeTelegramPoll() {
 // extractBooks gains a slice of string from a books that participants suggested
 func (b *Bot) extractBooks() []string {
 	b.mu.Lock()
-	participants := make([]*participant, len(b.bookGathering.participants))
-	copy(participants, b.bookGathering.participants)
-	b.mu.Unlock()
-
-	books := make([]string, 0, len(participants))
-	for _, p := range participants {
-		if p.book == nil {
-			continue
+	books := make([]string, 0, len(b.bookGathering.participants))
+	for _, p := range b.bookGathering.participants {
+		if p.book != nil {
+			name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.book.title, b.messages.AuthorLabel, p.book.author)
+			books = append(books, name)
 		}
-		name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.book.title, b.messages.AuthorLabel, p.book.author)
-		books = append(books, name)
 	}
-	books = shuffleSlice(books)
-	return books
+	b.mu.Unlock()
+	return shuffleSlice(books)
 }
 
 // clearPoll refreshes the state of a telegram poll
