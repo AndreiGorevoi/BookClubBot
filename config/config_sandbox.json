@@ -5,7 +5,7 @@
   "notify_before_poll": 30,
   "debug_mode": true,
   "long_polling_timeout": 60,
-  "mongo_uri": "mongodb://localhost:27017",
+  "mongo_uri": "mongodb://RAILWAY_MONGO_URL_NOT_SET:27017",
   "db_name": "book_club_sandbox",
   "log_file_name": "application.log"
 }
