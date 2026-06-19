@@ -71,10 +71,15 @@ jobs:
 
       - name: Trigger Railway sandbox redeploy
         continue-on-error: true
+        env:
+          # Must be an ACCOUNT or WORKSPACE token (sent as Authorization: Bearer).
+          # Project tokens use the Project-Access-Token header and CANNOT trigger
+          # deploys — they return "Not Authorized".
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          curl --fail --request POST \
+          response=$(curl --silent --request POST \
             --url https://backboard.railway.com/graphql/v2 \
-            --header "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            --header "Authorization: Bearer $RAILWAY_TOKEN" \
             --header "Content-Type: application/json" \
             --data '{
               "query": "mutation environmentTriggersDeploy($input: EnvironmentTriggersDeployInput!) { environmentTriggersDeploy(input: $input) }",
@@ -85,4 +90,11 @@ jobs:
                   "serviceId": "02e9cc0f-533e-4bf2-bd6f-97651b73d2f9"
                 }
               }
-            }'
+            }')
+          echo "$response"
+          # GraphQL errors come back as HTTP 200, so inspect the body explicitly.
+          if echo "$response" | grep -q '"errors"'; then
+            echo "::error::Railway redeploy failed"
+            exit 1
+          fi
+          echo "Railway redeploy triggered successfully"
