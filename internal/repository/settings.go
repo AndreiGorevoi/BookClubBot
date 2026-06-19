@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -41,6 +42,9 @@ func (s *SettingsRepository) GetGroupId(ctx context.Context) (int64, error) {
 
 	filter := bson.M{"_id": "settings"}
 	if err := collection.FindOne(ctx, filter).Decode(&res); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return 0, ErrNotFound
+		}
 		return 0, err
 	}
 
