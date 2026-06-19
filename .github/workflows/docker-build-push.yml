@@ -73,6 +73,7 @@ jobs:
         continue-on-error: true
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: 1230437c-b600-4a1e-abf8-095fe45256b4
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SANDBOX_SERVICE_ID }}
         run: |
           npm install -g @railway/cli@3
