@@ -152,6 +152,11 @@ func (s *SessionRepository) AddVoter(ctx context.Context, id primitive.ObjectID,
 // StartVoting attaches the voting sub-document and moves the session into the
 // voting status. The session stays active, so activeLock is left in place.
 func (s *SessionRepository) StartVoting(ctx context.Context, id primitive.ObjectID, voting *models.Voting) error {
+	// Store an empty array (not BSON null) so later $addToSet on voterIds works.
+	if voting.VoterIDs == nil {
+		voting.VoterIDs = []int64{}
+	}
+
 	collection := s.db.Collection(sessions_collection)
 	filter := bson.M{"_id": id}
 	update := bson.M{"$set": bson.M{
