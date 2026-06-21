@@ -131,9 +131,11 @@ func (s *SessionRepository) UpdateParticipant(ctx context.Context, id primitive.
 }
 
 // AddVoter records that a subscriber has voted (idempotent via $addToSet).
+// It requires voting to have started; if the session has no voting sub-document
+// yet, it returns ErrNotFound rather than a raw "$addToSet on null" write error.
 func (s *SessionRepository) AddVoter(ctx context.Context, id primitive.ObjectID, voterID int64) error {
 	collection := s.db.Collection(sessions_collection)
-	filter := bson.M{"_id": id}
+	filter := bson.M{"_id": id, "voting": bson.M{"$ne": nil}}
 	update := bson.M{
 		"$addToSet": bson.M{"voting.voterIds": voterID},
 		"$set":      bson.M{"updatedAt": time.Now().UTC()},
@@ -203,7 +205,7 @@ func (s *SessionRepository) SetStatus(ctx context.Context, id primitive.ObjectID
 
 	set := bson.M{"status": status, "updatedAt": time.Now().UTC()}
 	update := bson.M{"$set": set}
-	if isActiveStatus(status) {
+	if models.IsActiveStatus(status) {
 		set["activeLock"] = true
 	} else {
 		update["$unset"] = bson.M{"activeLock": ""}
@@ -266,15 +268,6 @@ func (s *SessionRepository) setField(ctx context.Context, id primitive.ObjectID,
 		return ErrNotFound
 	}
 	return nil
-}
-
-func isActiveStatus(status string) bool {
-	switch status {
-	case models.StatusGathering, models.StatusVoting, models.StatusReading:
-		return true
-	default:
-		return false
-	}
 }
 
 // activeLock returns a pointer to true when active, or nil so the field is

@@ -5,6 +5,7 @@ import (
 	"BookClubBot/config"
 	"BookClubBot/internal/repository"
 	"BookClubBot/message"
+	"context"
 	"log"
 	"os"
 )
@@ -37,6 +38,17 @@ func main() {
 
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Session persistence layer. The bot does not consume it yet (wiring lands
+	// in a follow-up), but the indexes — notably the unique "one active session"
+	// index — must exist before sessions are written, so create them at startup.
+	sessionRepository, err := repository.NewSessionRepository(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := sessionRepository.EnsureIndexes(context.Background()); err != nil {
+		log.Fatalf("error ensuring session indexes: '%v'", err)
 	}
 
 	b := bot.NewBot(cfg, msg, subRepository, settingsRepository)

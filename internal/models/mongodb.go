@@ -128,12 +128,18 @@ type BookClubSession struct {
 	ActiveLock *bool `bson:"activeLock,omitempty"`
 }
 
-// IsActive reports whether a session is in an active (non-terminal) status.
-func (s *BookClubSession) IsActive() bool {
-	switch s.Status {
+// IsActiveStatus reports whether a status is active (non-terminal). It is the
+// single source of truth for which statuses count as active.
+func IsActiveStatus(status string) bool {
+	switch status {
 	case StatusGathering, StatusVoting, StatusReading:
 		return true
 	default:
 		return false
 	}
+}
+
+// IsActive reports whether a session is in an active (non-terminal) status.
+func (s *BookClubSession) IsActive() bool {
+	return IsActiveStatus(s.Status)
 }

@@ -154,6 +154,24 @@ func TestAddVoter_Idempotent(t *testing.T) {
 	assert.ElementsMatch(t, []int64{100, 200}, stored.Voting.VoterIDs)
 }
 
+func TestAddVoter_BeforeVotingStarts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	mongoDB, clear := mongo_helpers.CreateTestMongoDB(t)
+	defer cleanSession(clear, mongoDB)
+	repo := newSessionRepo(t, mongoDB)
+	ctx := testCtx(t)
+
+	session := newGatheringSession(100)
+	require.NoError(t, repo.CreateSession(ctx, session))
+
+	// voting sub-document does not exist yet → ErrNotFound, not a write error.
+	err := repo.AddVoter(ctx, session.ID, 100)
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestStartVotingAndSetWinners(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
