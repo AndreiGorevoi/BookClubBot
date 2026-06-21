@@ -58,6 +58,11 @@ Single-document collection. Stores bot-level runtime settings that must survive 
 
 ## Models defined but not yet persisted
 
+> **Superseded.** The session schema below is an earlier draft. The authoritative
+> design for the book-club round (gathering → voting → reading) and its MongoDB
+> schema now lives in [`book-club-flow.md`](./book-club-flow.md). Follow that doc
+> for the feature; the section below is kept only for historical reference.
+
 The following structs exist in `internal/models/mongodb.go` and have BSON tags, but there is currently **no repository or collection** wired up for them. They represent the intended next phase of the schema (replacing in-memory state with MongoDB).
 
 ### `BookClubSession` (planned collection: `book_club_sessions`)
