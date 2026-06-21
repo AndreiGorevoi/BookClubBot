@@ -66,10 +66,7 @@ func (s *SessionRepository) CreateSession(ctx context.Context, session *models.B
 	collection := s.db.Collection(sessions_collection)
 	res, err := collection.InsertOne(ctx, session)
 	if err != nil {
-		if mongo.IsDuplicateKeyError(err) {
-			return ErrActiveSessionExists
-		}
-		return err
+		return mapActiveLockConflict(err)
 	}
 	if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
 		session.ID = oid
@@ -152,7 +149,10 @@ func (s *SessionRepository) AddVoter(ctx context.Context, id primitive.ObjectID,
 }
 
 // StartVoting attaches the voting sub-document and moves the session into the
-// voting status. The session stays active, so activeLock is left in place.
+// voting status. It (re)asserts activeLock so the "active status ⟺ activeLock
+// present" invariant holds locally, rather than relying on the lock already
+// being there; setting it on the same document is a no-op, and the unique index
+// surfaces ErrActiveSessionExists if another session is somehow active.
 func (s *SessionRepository) StartVoting(ctx context.Context, id primitive.ObjectID, voting *models.Voting) error {
 	// Store an empty array (not BSON null) so later $addToSet on voterIds works.
 	if voting.VoterIDs == nil {
@@ -162,14 +162,15 @@ func (s *SessionRepository) StartVoting(ctx context.Context, id primitive.Object
 	collection := s.db.Collection(sessions_collection)
 	filter := bson.M{"_id": id}
 	update := bson.M{"$set": bson.M{
-		"voting":    voting,
-		"status":    models.StatusVoting,
-		"updatedAt": time.Now().UTC(),
+		"voting":     voting,
+		"status":     models.StatusVoting,
+		"activeLock": true,
+		"updatedAt":  time.Now().UTC(),
 	}}
 
 	res, err := collection.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return err
+		return mapActiveLockConflict(err)
 	}
 	if res.MatchedCount == 0 {
 		return ErrNotFound
@@ -213,7 +214,7 @@ func (s *SessionRepository) SetStatus(ctx context.Context, id primitive.ObjectID
 
 	res, err := collection.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return err
+		return mapActiveLockConflict(err)
 	}
 	if res.MatchedCount == 0 {
 		return ErrNotFound
@@ -268,6 +269,16 @@ func (s *SessionRepository) setField(ctx context.Context, id primitive.ObjectID,
 		return ErrNotFound
 	}
 	return nil
+}
+
+// mapActiveLockConflict translates a duplicate-key error from the unique
+// activeLock index into ErrActiveSessionExists, so every write that could
+// collide with an existing active session reports the condition the same way.
+func mapActiveLockConflict(err error) error {
+	if mongo.IsDuplicateKeyError(err) {
+		return ErrActiveSessionExists
+	}
+	return err
 }
 
 // activeLock returns a pointer to true when active, or nil so the field is
