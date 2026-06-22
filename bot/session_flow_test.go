@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"BookClubBot/config"
 	"BookClubBot/internal/models"
 	"BookClubBot/message"
 	"testing"
@@ -60,6 +61,20 @@ func TestAllBooksChosen(t *testing.T) {
 		)
 		assert.False(t, allBooksChosen(session))
 	})
+}
+
+func TestRunTelegramPollNotEnoughBooks(t *testing.T) {
+	b := testBot()
+	b.cfg = &config.AppConfig{GroupId: 1}
+
+	// Only one finished book — too few for a poll.
+	session := sessionWith(
+		&models.Participant{SubscriberID: 1, Step: models.StepDone, Book: &models.Book{Title: "Dune", Author: "Herbert"}},
+		&models.Participant{SubscriberID: 2, Step: models.StepSkipped},
+	)
+
+	err := b.runTelegramPoll(session)
+	assert.ErrorIs(t, err, errNotEnoughBooks)
 }
 
 func TestExtractBooks(t *testing.T) {
