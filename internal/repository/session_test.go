@@ -223,13 +223,16 @@ func TestSetGatheringAndVotingNotified(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Millisecond)
 	require.NoError(t, repo.SetGatheringNotified(ctx, session.ID, at))
 	require.NoError(t, repo.SetVotingNotified(ctx, session.ID, at))
+	require.NoError(t, repo.SetVotingClosed(ctx, session.ID, at))
 
 	stored, err := repo.GetSessionById(ctx, session.ID)
 	require.NoError(t, err)
 	require.NotNil(t, stored.Gathering.NotifiedAt)
 	require.NotNil(t, stored.Voting.NotifiedAt)
+	require.NotNil(t, stored.Voting.ClosedAt)
 	assert.Equal(t, at, stored.Gathering.NotifiedAt.UTC())
 	assert.Equal(t, at, stored.Voting.NotifiedAt.UTC())
+	assert.Equal(t, at, stored.Voting.ClosedAt.UTC())
 }
 
 func TestListPastSessions(t *testing.T) {
