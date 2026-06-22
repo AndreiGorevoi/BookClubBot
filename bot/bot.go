@@ -14,29 +14,29 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type Bot struct {
+	// mu serializes the phase transitions (gathering → voting → completed) so
+	// that a deadline goroutine and the main update loop cannot both drive the
+	// same transition. The session in MongoDB is the source of truth.
 	mu                 sync.Mutex
 	cfg                *config.AppConfig
 	tgBot              *tgbotapi.BotAPI
-	bookGathering      *bookGathering
-	telegramPoll       *telegramPoll
 	messages           *message.LocalizedMessages
 	subRepository      subscriberRepo
 	settingsRepository settingsRepo
+	sessionRepository  sessionRepo
 }
 
-func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository subscriberRepo, settingsRepository settingsRepo) *Bot {
+func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository subscriberRepo, settingsRepository settingsRepo, sessionRepository sessionRepo) *Bot {
 	return &Bot{
-		cfg:           cfg,
-		bookGathering: &bookGathering{},
-		telegramPoll: &telegramPoll{
-			voted: make(map[int64]struct{}),
-		},
+		cfg:                cfg,
 		messages:           messages,
 		subRepository:      subRepository,
 		settingsRepository: settingsRepository,
+		sessionRepository:  sessionRepository,
 	}
 }
 
@@ -118,18 +118,7 @@ func (b *Bot) Run() {
 		}
 
 		if update.PollAnswer != nil {
-			b.mu.Lock()
-			if !b.telegramPoll.isActive {
-				b.mu.Unlock()
-				continue
-			}
-			b.telegramPoll.voted[update.PollAnswer.User.ID] = struct{}{}
-			shouldClose := len(b.telegramPoll.voted) >= b.telegramPoll.participants
-			b.mu.Unlock()
-
-			if shouldClose {
-				b.closeTelegramPoll()
-			}
+			b.handlePollAnswer(update.PollAnswer)
 		}
 	}
 }
@@ -211,150 +200,175 @@ func (b *Bot) handleUnsubscribe(update *tgbotapi.Update) error {
 	return nil
 }
 
-// handleStartVote handles a starting a book gathering from subcribers
+// handleStartVote opens a new book gathering session and DMs every active
+// subscriber to suggest a book.
 func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 	if b.cfg.GroupId == 0 {
 		b.sendMessage(update.Message.From.ID, b.messages.CannotStartGatheringGroupIdMissing)
 		return nil
 	}
-	if b.bookGathering.active {
-		b.sendMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
-		return nil
+
+	subs, err := b.subRepository.GetAllSubscribers(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to load subscribers: %w", err)
 	}
 
-	b.bookGathering.active = true
-	err := b.initParticipants()
-	if err != nil {
-		return fmt.Errorf("failed to init participants: %w", err)
+	now := time.Now().UTC()
+	participants := make([]*models.Participant, 0, len(subs))
+	for _, sub := range subs {
+		participants = append(participants, &models.Participant{
+			SubscriberID: sub.ID,
+			FirstName:    sub.FirstName,
+			LastName:     sub.LastName,
+			Nick:         sub.Nick,
+			Step:         models.StepBook,
+			InvitedAt:    now,
+		})
 	}
+
+	session := &models.BookClubSession{
+		Name:      now.Format("January 2006"),
+		Status:    models.StatusGathering,
+		CreatedBy: update.Message.From.ID,
+		Gathering: models.Gathering{
+			Deadline:     now.Add(time.Duration(b.cfg.TimeToGatherBooks) * time.Second),
+			NotifyAt:     now.Add(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second),
+			Participants: participants,
+		},
+	}
+
+	if err := b.sessionRepository.CreateSession(context.Background(), session); err != nil {
+		if errors.Is(err, repository.ErrActiveSessionExists) {
+			b.sendMessage(update.Message.From.ID, b.messages.VotingAlreadyStartedWaitForEnd)
+			return nil
+		}
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	for _, p := range participants {
+		b.sendMessage(p.SubscriberID, b.messages.PleaseSuggestBookTitle)
+	}
+
 	b.deadlineNotificationBookGathering(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second)
 	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
 	return nil
 }
 
-// handleUserMsg handles any message from a user
+// handleUserMsg handles any free-text message from a user during book gathering.
 func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
-	currentUserId := update.Message.From.ID
+	uid := update.Message.From.ID
 
-	b.mu.Lock()
-	active := b.bookGathering.active
-	var participants []*participant
-	if active {
-		participants = make([]*participant, len(b.bookGathering.participants))
-		copy(participants, b.bookGathering.participants)
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
+		log.Printf("cannot get active session: %v", err)
+		b.sendMessage(uid, b.messages.SomethingWrong)
+		return
 	}
-	b.mu.Unlock()
-
-	if !active {
-		b.sendMessage(currentUserId, b.messages.VotingNotStartedOrEnded)
+	if session == nil || session.Status != models.StatusGathering {
+		b.sendMessage(uid, b.messages.VotingNotStartedOrEnded)
 		return
 	}
 
-	var particiapant *participant
-	for _, p := range participants {
-		if p.id == currentUserId {
-			particiapant = p
-			break
-		}
-	}
-	if particiapant == nil {
-		b.sendMessage(currentUserId, b.messages.NotParticipantCurrentVoting)
+	p := findParticipant(session, uid)
+	if p == nil || p.Step == models.StepSkipped {
+		b.sendMessage(uid, b.messages.NotParticipantCurrentVoting)
 		return
 	}
 
-	b.handleParticipantAnswer(particiapant, update)
+	b.handleParticipantAnswer(session, p, update)
 
-	b.mu.Lock()
-	allDone := b.areAllBooksChosen()
-	stillActive := b.bookGathering.active
-	b.mu.Unlock()
-
-	if allDone && stillActive {
+	// p points into session.Gathering.Participants, so session already reflects
+	// the step just applied — no need to reload. If everyone has finished or
+	// skipped, move straight to the poll.
+	if allBooksChosen(session) {
 		b.runTelegramPollFlow()
 	}
 }
 
-// handleParticipantAnswer handles an answer from a particiapant during a book gathering
-func (b *Bot) handleParticipantAnswer(p *participant, update *tgbotapi.Update) {
-	b.mu.Lock()
-	status := p.status
-	b.mu.Unlock()
+// handleParticipantAnswer advances one participant's submission flow and
+// persists each step.
+func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models.Participant, update *tgbotapi.Update) {
+	uid := update.Message.From.ID
 
-	switch status {
-	case bookAsked:
-		bookTitle := strings.TrimSpace(update.Message.Text)
-		b.mu.Lock()
-		alreadyProposed := b.isBookAlreadyProposed(bookTitle)
-		if !alreadyProposed {
-			p.book = &book{title: bookTitle}
-			p.status = authorAsked
-		}
-		b.mu.Unlock()
-		if alreadyProposed {
-			b.sendMessage(update.Message.From.ID, b.messages.BookAlreadyProposed)
+	switch p.Step {
+	case models.StepBook:
+		title := strings.TrimSpace(update.Message.Text)
+		if isBookAlreadyProposed(session, title) {
+			b.sendMessage(uid, b.messages.BookAlreadyProposed)
 			return
 		}
-		b.sendMessage(update.Message.From.ID, b.messages.WhoIsAuthor)
+		p.Book = &models.Book{Title: title}
+		p.Step = models.StepAuthor
+		b.persistParticipant(session.ID, p)
+		b.sendMessage(uid, b.messages.WhoIsAuthor)
 
-	case authorAsked:
-		b.mu.Lock()
-		p.book.author = update.Message.Text
-		p.status = descriptionAsked
-		b.mu.Unlock()
-		b.sendMessage(update.Message.From.ID, b.messages.WriteBookDescription)
+	case models.StepAuthor:
+		p.Book.Author = update.Message.Text
+		p.Step = models.StepDescription
+		b.persistParticipant(session.ID, p)
+		b.sendMessage(uid, b.messages.WriteBookDescription)
 
-	case descriptionAsked:
-		b.mu.Lock()
-		p.book.description = update.Message.Text
-		p.status = imageAsked
-		b.mu.Unlock()
-		b.sendMessage(update.Message.From.ID, b.messages.AttachCoverPhoto)
+	case models.StepDescription:
+		p.Book.Description = update.Message.Text
+		p.Step = models.StepImage
+		b.persistParticipant(session.ID, p)
+		b.sendMessage(uid, b.messages.AttachCoverPhoto)
 
-	case imageAsked:
-		b.mu.Lock()
-		if update.Message.Photo != nil {
+	case models.StepImage:
+		hasPhoto := update.Message.Photo != nil
+		if hasPhoto {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
-			p.book.photoId = photo.FileID
+			p.Book.PhotoID = photo.FileID
 		}
-		p.status = finished
-		b.mu.Unlock()
+		now := time.Now().UTC()
+		p.Step = models.StepDone
+		p.SubmittedAt = &now
+		b.persistParticipant(session.ID, p)
 
-		if update.Message.Photo != nil {
-			b.sendMessage(update.Message.From.ID, b.messages.BookAddedToNextVoting)
+		if hasPhoto {
+			b.sendMessage(uid, b.messages.BookAddedToNextVoting)
 		} else {
-			b.sendMessage(update.Message.From.ID, b.messages.ImageMissingBookAdded)
+			b.sendMessage(uid, b.messages.ImageMissingBookAdded)
 		}
-		log.Printf("user: %s %s suggested a book.\n", p.firstName, p.lastName)
+		log.Printf("user: %s %s suggested a book.\n", p.FirstName, p.LastName)
 
-	case finished:
-		b.sendMessage(update.Message.From.ID, b.messages.VotingAlreadyCompleted)
+	case models.StepDone:
+		b.sendMessage(uid, b.messages.VotingAlreadyCompleted)
 	}
 }
 
-// handleSkip handles a '/skip' message from a user due remove them from an ongoing book gathering
+// handleSkip removes a user from the ongoing book gathering.
 func (b *Bot) handleSkip(update *tgbotapi.Update) {
-	userId := update.Message.From.ID
+	uid := update.Message.From.ID
 
-	b.mu.Lock()
-	active := b.bookGathering.active
-	isParticipant := b.bookGathering.isParticipant(userId)
-	b.mu.Unlock()
-
-	if !active {
-		b.sendMessage(userId, b.messages.VotingNotStartedOrEnded)
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
+		log.Printf("cannot get active session: %v", err)
+		b.sendMessage(uid, b.messages.SomethingWrong)
 		return
 	}
-	if !isParticipant {
-		b.sendMessage(userId, b.messages.AlreadyDeclinedSuggestion)
+	if session == nil || session.Status != models.StatusGathering {
+		b.sendMessage(uid, b.messages.VotingNotStartedOrEnded)
 		return
 	}
 
-	b.mu.Lock()
-	b.bookGathering.removeParticipant(userId)
-	b.mu.Unlock()
+	p := findParticipant(session, uid)
+	if p == nil || p.Step == models.StepSkipped {
+		b.sendMessage(uid, b.messages.AlreadyDeclinedSuggestion)
+		return
+	}
 
-	b.sendMessage(userId, b.messages.UnableToSuggestBook)
-	log.Printf("user: %d skiped a book gathering.\n", userId)
+	p.Step = models.StepSkipped
+	p.Book = nil
+	b.persistParticipant(session.ID, p)
+	b.sendMessage(uid, b.messages.UnableToSuggestBook)
+	log.Printf("user: %d skiped a book gathering.\n", uid)
+
+	// session already reflects the skip (p points into it). The last pending
+	// user skipping should end the gathering too.
+	if allBooksChosen(session) {
+		b.runTelegramPollFlow()
+	}
 }
 
 // handleHelp handles a '/help' message from a user to give hime a help message about bot's functionality
@@ -362,29 +376,29 @@ func (b *Bot) handleHelp(update *tgbotapi.Update) {
 	b.sendMessage(update.Message.From.ID, b.messages.HelpInfo)
 }
 
-// initParticipants fills participants to the bookGathering filds by
-// converting subscribers and sends them a message with asking a name of a book
-func (b *Bot) initParticipants() error {
-	subs, err := b.subRepository.GetAllSubscribers(context.Background())
+// handlePollAnswer records a vote and closes the poll once everyone has voted.
+func (b *Bot) handlePollAnswer(answer *tgbotapi.PollAnswer) {
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
-		return err
+		log.Printf("cannot get active session for poll answer: %v", err)
+		return
 	}
-	participants := make([]*participant, 0, len(subs))
-	for _, sub := range subs {
-		msg := tgbotapi.NewMessage(sub.ID, b.messages.PleaseSuggestBookTitle)
-		b.tgBot.Send(msg)
-		p := &participant{
-			id:        sub.ID,
-			firstName: sub.FirstName,
-			lastName:  sub.LastName,
-			nick:      sub.Nick,
-			status:    bookAsked,
-		}
+	if session == nil || session.Status != models.StatusVoting || session.Voting == nil {
+		return
+	}
 
-		participants = append(participants, p)
+	if err := b.sessionRepository.AddVoter(context.Background(), session.ID, answer.User.ID); err != nil {
+		log.Printf("cannot record voter: %v", err)
+		return
 	}
-	b.bookGathering.participants = participants
-	return nil
+
+	updated, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil || updated == nil || updated.Voting == nil {
+		return
+	}
+	if len(updated.Voting.VoterIDs) >= updated.Voting.TotalParticipants {
+		b.closeTelegramPoll()
+	}
 }
 
 // announceWinner defines a winner and sends a message to the group
@@ -408,35 +422,25 @@ func (b *Bot) announceWinner(poll *tgbotapi.Poll) {
 	b.tgBot.Send(msg)
 }
 
-func (b *Bot) areAllBooksChosen() bool {
-	for _, p := range b.bookGathering.participants {
-		if p.status != finished {
-			return false
-		}
-	}
-	return true
-}
-
-// msgAboutGatheringBooks sends a message about books are going to be in a poll to the group chat
-func (b *Bot) msgAboutGatheringBooks() {
+// msgAboutGatheringBooks sends a media group of the gathered books to the group.
+func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
 	if b.cfg.GroupId == 0 {
 		log.Println("cannot send a msg about gathering books as GroupId is not innit")
 		return
 	}
 
-	b.mu.Lock()
 	groupId := b.cfg.GroupId
 	var mediaItems []interface{}
-	for _, p := range b.bookGathering.participants {
-		if p.book == nil {
+	for _, p := range session.Gathering.Participants {
+		if p.Step != models.StepDone || p.Book == nil {
 			continue
 		}
-		img := p.bookImage()
-		img.Caption = truncateString(p.bookCaption(), 1024)
+		vp := viewParticipant(p)
+		img := vp.bookImage()
+		img.Caption = truncateString(vp.bookCaption(), 1024)
 		img.ParseMode = "Markdown"
 		mediaItems = append(mediaItems, img)
 	}
-	b.mu.Unlock()
 
 	if len(mediaItems) == 0 {
 		log.Println("No participants or books found.")
@@ -460,37 +464,45 @@ func (b *Bot) msgAboutGatheringBooks() {
 	}
 }
 
-// runTelegramPollFlowAfterDelay runs a runTelegramPollFlow but with delay in a separate goroutine
+// runTelegramPollFlowAfterDelay runs runTelegramPollFlow after a delay.
 func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		b.mu.Lock()
-		active := b.bookGathering.active
-		b.mu.Unlock()
-		if active {
-			b.runTelegramPollFlow()
-		}
+		b.runTelegramPollFlow()
 	}()
 }
 
-// runTelegramPollFlow stops a book gathering and runs a telegram poll.
-// It is safe to call concurrently: only the first call proceeds, subsequent
-// calls that race with it see active==false and return immediately.
+// runTelegramPollFlow ends the active book gathering and starts a telegram poll.
+// It claims the transition under b.mu by flipping the session to the voting
+// status; only the first caller that sees a gathering session proceeds.
 func (b *Bot) runTelegramPollFlow() {
 	b.mu.Lock()
-	if !b.bookGathering.active {
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
+		b.mu.Unlock()
+		log.Printf("cannot get active session: %v", err)
+		return
+	}
+	if session == nil || session.Status != models.StatusGathering {
 		b.mu.Unlock()
 		return
 	}
-	b.bookGathering.active = false
+	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusVoting); err != nil {
+		b.mu.Unlock()
+		log.Printf("cannot transition session to voting: %v", err)
+		return
+	}
 	b.mu.Unlock()
 
-	defer b.stopBookGathering()
-	b.msgAboutGatheringBooks()
+	b.msgAboutGatheringBooks(session)
 
-	err := b.runTelegramPoll()
-	if err != nil {
+	if err := b.runTelegramPoll(session); err != nil {
 		log.Printf("ERROR: cannot run poll: %v\n", err)
+		// Could not start a poll (e.g. fewer than 2 books). End the round so a
+		// new one can be started.
+		if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCancelled); err != nil {
+			log.Printf("cannot cancel session: %v", err)
+		}
 		return
 	}
 
@@ -498,20 +510,14 @@ func (b *Bot) runTelegramPollFlow() {
 	b.closeTelegramPollAfterDelay(time.Duration(b.cfg.TimeForTelegramPoll) * time.Second)
 }
 
-// runTelegramPoll creates and starts a poll for choosing a book in the group
-func (b *Bot) runTelegramPoll() error {
-	b.mu.Lock()
+// runTelegramPoll creates and starts a poll for choosing a book in the group,
+// then persists the voting sub-document.
+func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
 	if b.cfg.GroupId == 0 {
-		b.mu.Unlock()
 		return fmt.Errorf("cannot run telegram poll as groupId is not innit")
 	}
-	if b.telegramPoll.isActive {
-		b.mu.Unlock()
-		return errors.New("cannot run a poll as there is a still active poll")
-	}
-	b.mu.Unlock()
 
-	books := b.extractBooks()
+	books := b.extractBooks(session)
 	if len(books) < 2 {
 		return errors.New("cannot run a poll as there is less than 2 books")
 	}
@@ -535,15 +541,18 @@ func (b *Bot) runTelegramPoll() error {
 		return err
 	}
 
-	b.mu.Lock()
-	b.telegramPoll.isActive = true
-	b.telegramPoll.pollId = msg.MessageID
-	b.telegramPoll.participants = len(subs)
-	b.mu.Unlock()
-	return nil
+	now := time.Now().UTC()
+	voting := &models.Voting{
+		TelegramPollID:    msg.MessageID,
+		Deadline:          now.Add(time.Duration(b.cfg.TimeForTelegramPoll) * time.Second),
+		NotifyAt:          now.Add(time.Duration(b.cfg.TimeForTelegramPoll-b.cfg.NotifyBeforePoll) * time.Second),
+		TotalParticipants: len(subs),
+		StartedAt:         now,
+	}
+	return b.sessionRepository.StartVoting(context.Background(), session.ID, voting)
 }
 
-// closePollAfterDelay runs a gourotine that stops a poll after a given delay
+// closeTelegramPollAfterDelay closes the poll after a given delay.
 func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
@@ -551,31 +560,34 @@ func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
 	}()
 }
 
-// closeTelegramPoll stops a poll and announces the winner.
-// It is safe to call concurrently: only the first call proceeds, subsequent
-// calls that race with it see isActive==false and return immediately.
+// closeTelegramPoll stops the poll, records the winner(s) and completes the
+// session. The critical section runs under b.mu so a deadline goroutine and an
+// all-voted close cannot both drive it. The session is completed only AFTER
+// StopPoll succeeds: a failed StopPoll leaves it in voting so the close can be
+// retried (by a later vote, or PR 2b's recovery loop) instead of stranding an
+// open poll with no winner and a held active lock.
 func (b *Bot) closeTelegramPoll() {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if b.cfg.GroupId == 0 {
-		b.mu.Unlock()
 		log.Println("cannot close a telegram poll as GroupId is not innit")
 		return
 	}
-	if !b.telegramPoll.isActive {
-		b.mu.Unlock()
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
+		log.Printf("cannot get active session: %v", err)
+		return
+	}
+	if session == nil || session.Status != models.StatusVoting || session.Voting == nil {
 		log.Print("there is not an active poll, cannot close it")
 		return
 	}
-	pollId := b.telegramPoll.pollId
-	groupId := b.cfg.GroupId
-	b.telegramPoll.isActive = false
-	b.mu.Unlock()
 
-	defer b.clearPoll()
 	finishPoll := tgbotapi.StopPollConfig{
 		BaseEdit: tgbotapi.BaseEdit{
-			ChatID:    groupId,
-			MessageID: pollId,
+			ChatID:    b.cfg.GroupId,
+			MessageID: session.Voting.TelegramPollID,
 		},
 	}
 	res, err := b.tgBot.StopPoll(finishPoll)
@@ -583,57 +595,98 @@ func (b *Bot) closeTelegramPoll() {
 		log.Printf("ERROR: %s", err)
 		return
 	}
+
+	if winners := b.winnersFromPoll(session, &res); len(winners) > 0 {
+		if err := b.sessionRepository.SetWinners(context.Background(), session.ID, winners); err != nil {
+			log.Printf("cannot save winners: %v", err)
+		}
+	}
+	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCompleted); err != nil {
+		log.Printf("cannot complete session: %v", err)
+		return
+	}
 	b.announceWinner(&res)
 }
 
-// extractBooks gains a slice of string from a books that participants suggested
-func (b *Bot) extractBooks() []string {
-	b.mu.Lock()
-	books := make([]string, 0, len(b.bookGathering.participants))
-	for _, p := range b.bookGathering.participants {
-		if p.book != nil {
-			name := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, p.book.title, b.messages.AuthorLabel, p.book.author)
-			books = append(books, name)
+// extractBooks builds the shuffled poll options from the finished submissions.
+func (b *Bot) extractBooks(session *models.BookClubSession) []string {
+	books := make([]string, 0, len(session.Gathering.Participants))
+	for _, p := range session.Gathering.Participants {
+		if p.Step == models.StepDone && p.Book != nil {
+			books = append(books, b.pollOptionFor(p.Book))
 		}
 	}
-	b.mu.Unlock()
 	return shuffleSlice(books)
 }
 
-// clearPoll refreshes the state of a telegram poll
-func (b *Bot) clearPoll() {
-	b.mu.Lock()
-	b.telegramPoll = &telegramPoll{
-		voted: make(map[int64]struct{}),
+// winnersFromPoll maps the winning poll option texts back to the books that
+// produced them.
+func (b *Bot) winnersFromPoll(session *models.BookClubSession, poll *tgbotapi.Poll) []models.Winner {
+	if poll == nil {
+		return nil
 	}
-	b.mu.Unlock()
+	// A poll that closed with zero votes has max voter count 0, which
+	// defineWinners reports as "every option won". Treat no votes as no winner.
+	hasVotes := false
+	for _, o := range poll.Options {
+		if o.VoterCount > 0 {
+			hasVotes = true
+			break
+		}
+	}
+	if !hasVotes {
+		return nil
+	}
+
+	texts := defineWinners(poll)
+	if len(texts) == 0 {
+		return nil
+	}
+	// Telegram may trim trailing whitespace/newlines from option texts, so match
+	// on trimmed values rather than exact equality.
+	wonText := make(map[string]struct{}, len(texts))
+	for _, t := range texts {
+		wonText[strings.TrimSpace(t)] = struct{}{}
+	}
+	winners := make([]models.Winner, 0, len(texts))
+	for _, p := range session.Gathering.Participants {
+		if p.Step != models.StepDone || p.Book == nil {
+			continue
+		}
+		if _, ok := wonText[strings.TrimSpace(b.pollOptionFor(p.Book))]; ok {
+			winners = append(winners, models.Winner{
+				SubscriberID: p.SubscriberID,
+				Title:        p.Book.Title,
+				Author:       p.Book.Author,
+			})
+		}
+	}
+	return winners
 }
 
-// stopBookGathering stops a book gathering and clears a bookGathering state
-func (b *Bot) stopBookGathering() {
-	b.mu.Lock()
-	b.bookGathering = &bookGathering{}
-	b.mu.Unlock()
+// pollOptionFor renders the poll option text for a book. The same rendering is
+// used to build the poll and to match winners back to books, so they must stay
+// in sync.
+func (b *Bot) pollOptionFor(bk *models.Book) string {
+	return fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, bk.Title, b.messages.AuthorLabel, bk.Author)
 }
 
-// deadlineNotificationBookGathering run a separate goroutine that notifies users about a deadline
-// of a book gathering. Delay is taken from a config
+// deadlineNotificationBookGathering notifies participants who have not finished
+// before the gathering deadline. Delay is taken from a config.
 func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
 
-		b.mu.Lock()
-		if !b.bookGathering.active {
-			b.mu.Unlock()
+		session, err := b.sessionRepository.GetActiveSession(context.Background())
+		if err != nil || session == nil || session.Status != models.StatusGathering {
 			return
 		}
-		toNotify := make([]int64, 0, len(b.bookGathering.participants))
-		for _, p := range b.bookGathering.participants {
-			if p.status != finished {
-				toNotify = append(toNotify, p.id)
+		var toNotify []int64
+		for _, p := range session.Gathering.Participants {
+			if p.Step != models.StepDone && p.Step != models.StepSkipped {
+				toNotify = append(toNotify, p.SubscriberID)
 			}
 		}
-		b.mu.Unlock()
 
 		txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
 		for _, id := range toNotify {
@@ -642,36 +695,62 @@ func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
 	}()
 }
 
-// deadlineNotificationTelegramPoll run a separate goroutine that notifies users about a deadline
-// of a telegram poll. Delay is taken from a config
+// deadlineNotificationTelegramPoll notifies the group before the poll deadline.
+// Delay is taken from a config.
 func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
 
-		b.mu.Lock()
-		if b.cfg.GroupId == 0 || !b.telegramPoll.isActive {
-			if b.cfg.GroupId == 0 {
-				log.Println("cannot announce the deadline as GroupId is not innit")
-			}
-			b.mu.Unlock()
+		if b.cfg.GroupId == 0 {
+			log.Println("cannot announce the deadline as GroupId is not innit")
 			return
 		}
-		groupId := b.cfg.GroupId
-		b.mu.Unlock()
+		session, err := b.sessionRepository.GetActiveSession(context.Background())
+		if err != nil || session == nil || session.Status != models.StatusVoting {
+			return
+		}
 
 		txt := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
-		b.sendMessage(groupId, txt)
+		b.sendMessage(b.cfg.GroupId, txt)
 	}()
 }
 
-// isBookAlreadyProposed checks weather a book with provided title is already proposed by another particiapnt
-func (b *Bot) isBookAlreadyProposed(bookTitle string) bool {
-	for _, p := range b.bookGathering.participants {
-		if p.book != nil && p.book.title == bookTitle {
+// findParticipant returns the participant with the given id, or nil.
+func findParticipant(session *models.BookClubSession, id int64) *models.Participant {
+	for _, p := range session.Gathering.Participants {
+		if p.SubscriberID == id {
+			return p
+		}
+	}
+	return nil
+}
+
+// isBookAlreadyProposed reports whether a book with the given title was already
+// proposed by any participant.
+func isBookAlreadyProposed(session *models.BookClubSession, title string) bool {
+	for _, p := range session.Gathering.Participants {
+		if p.Book != nil && p.Book.Title == title {
 			return true
 		}
 	}
 	return false
+}
+
+// allBooksChosen reports whether every participant has finished or skipped.
+func allBooksChosen(session *models.BookClubSession) bool {
+	for _, p := range session.Gathering.Participants {
+		if p.Step != models.StepDone && p.Step != models.StepSkipped {
+			return false
+		}
+	}
+	return true
+}
+
+// persistParticipant writes a participant's updated state, logging on failure.
+func (b *Bot) persistParticipant(id primitive.ObjectID, p *models.Participant) {
+	if err := b.sessionRepository.UpdateParticipant(context.Background(), id, p); err != nil {
+		log.Printf("cannot update participant %d: %v", p.SubscriberID, err)
+	}
 }
 
 // sendMessage is a helper function that sends a message to a user
