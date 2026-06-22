@@ -107,4 +107,13 @@ func TestWinnersFromPoll(t *testing.T) {
 		winners := b.winnersFromPoll(session, &tgbotapi.Poll{})
 		assert.Empty(t, winners)
 	})
+
+	t.Run("zero votes yields no winners", func(t *testing.T) {
+		poll := &tgbotapi.Poll{Options: []tgbotapi.PollOption{
+			{Text: b.pollOptionFor(dune), VoterCount: 0},
+			{Text: b.pollOptionFor(neuro), VoterCount: 0},
+		}}
+		winners := b.winnersFromPoll(session, poll)
+		assert.Empty(t, winners)
+	})
 }

@@ -277,9 +277,10 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 
 	b.handleParticipantAnswer(session, p, update)
 
-	// If everyone has finished or skipped, move straight to the poll.
-	updated, err := b.sessionRepository.GetActiveSession(context.Background())
-	if err == nil && updated != nil && updated.Status == models.StatusGathering && allBooksChosen(updated) {
+	// p points into session.Gathering.Participants, so session already reflects
+	// the step just applied — no need to reload. If everyone has finished or
+	// skipped, move straight to the poll.
+	if allBooksChosen(session) {
 		b.runTelegramPollFlow()
 	}
 }
@@ -363,9 +364,9 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 	b.sendMessage(uid, b.messages.UnableToSuggestBook)
 	log.Printf("user: %d skiped a book gathering.\n", uid)
 
-	// The last pending user skipping should end the gathering too.
-	updated, err := b.sessionRepository.GetActiveSession(context.Background())
-	if err == nil && updated != nil && updated.Status == models.StatusGathering && allBooksChosen(updated) {
+	// session already reflects the skip (p points into it). The last pending
+	// user skipping should end the gathering too.
+	if allBooksChosen(session) {
 		b.runTelegramPollFlow()
 	}
 }
@@ -560,39 +561,33 @@ func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
 }
 
 // closeTelegramPoll stops the poll, records the winner(s) and completes the
-// session. It claims the transition under b.mu by completing the session; only
-// the first caller that sees a voting session proceeds.
+// session. The critical section runs under b.mu so a deadline goroutine and an
+// all-voted close cannot both drive it. The session is completed only AFTER
+// StopPoll succeeds: a failed StopPoll leaves it in voting so the close can be
+// retried (by a later vote, or PR 2b's recovery loop) instead of stranding an
+// open poll with no winner and a held active lock.
 func (b *Bot) closeTelegramPoll() {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if b.cfg.GroupId == 0 {
-		b.mu.Unlock()
 		log.Println("cannot close a telegram poll as GroupId is not innit")
 		return
 	}
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
-		b.mu.Unlock()
 		log.Printf("cannot get active session: %v", err)
 		return
 	}
 	if session == nil || session.Status != models.StatusVoting || session.Voting == nil {
-		b.mu.Unlock()
 		log.Print("there is not an active poll, cannot close it")
 		return
 	}
-	pollId := session.Voting.TelegramPollID
-	groupId := b.cfg.GroupId
-	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCompleted); err != nil {
-		b.mu.Unlock()
-		log.Printf("cannot complete session: %v", err)
-		return
-	}
-	b.mu.Unlock()
 
 	finishPoll := tgbotapi.StopPollConfig{
 		BaseEdit: tgbotapi.BaseEdit{
-			ChatID:    groupId,
-			MessageID: pollId,
+			ChatID:    b.cfg.GroupId,
+			MessageID: session.Voting.TelegramPollID,
 		},
 	}
 	res, err := b.tgBot.StopPoll(finishPoll)
@@ -605,6 +600,10 @@ func (b *Bot) closeTelegramPoll() {
 		if err := b.sessionRepository.SetWinners(context.Background(), session.ID, winners); err != nil {
 			log.Printf("cannot save winners: %v", err)
 		}
+	}
+	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCompleted); err != nil {
+		log.Printf("cannot complete session: %v", err)
+		return
 	}
 	b.announceWinner(&res)
 }
@@ -623,6 +622,22 @@ func (b *Bot) extractBooks(session *models.BookClubSession) []string {
 // winnersFromPoll maps the winning poll option texts back to the books that
 // produced them.
 func (b *Bot) winnersFromPoll(session *models.BookClubSession, poll *tgbotapi.Poll) []models.Winner {
+	if poll == nil {
+		return nil
+	}
+	// A poll that closed with zero votes has max voter count 0, which
+	// defineWinners reports as "every option won". Treat no votes as no winner.
+	hasVotes := false
+	for _, o := range poll.Options {
+		if o.VoterCount > 0 {
+			hasVotes = true
+			break
+		}
+	}
+	if !hasVotes {
+		return nil
+	}
+
 	texts := defineWinners(poll)
 	if len(texts) == 0 {
 		return nil
