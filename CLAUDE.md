@@ -43,25 +43,45 @@ The Telegram **group ID** is persisted in the MongoDB `settings` collection and 
 cmd/main.go           → wires config, messages, MongoDB, repositories, then calls bot.Run()
 config/               → JSON-based config per environment
 message/              → JSON-based localized UI strings (locale-swappable)
-bot/                  → all Telegram bot logic (in-memory state machine)
+bot/                  → all Telegram bot logic (MongoDB-backed session lifecycle)
 internal/
   models/             → MongoDB BSON structs (Subscriber, BookClubSession, etc.)
-  repository/         → MongoDB repository layer (SubscriberRepository, SettingsRepository)
+  repository/         → MongoDB repository layer (SubscriberRepository, SettingsRepository, SessionRepository)
   repository/testing/ → test helpers for spinning up a real test MongoDB
 ```
 
 ### Bot state machine
 
-`bot.Bot` holds two in-memory structs:
+A book-club round is one **session** persisted in the `book_club_sessions`
+collection (`gathering → voting → reading → completed`/`cancelled`). The bot is
+**DB-authoritative**: handlers load the active session and write each transition
+through `SessionRepository` rather than holding round state in memory, so an
+in-flight round survives a restart. At most one session is active at a time,
+enforced by a unique partial index (see `docs/book-club-flow.md`).
 
-- **`bookGathering`** — tracks active participants and their multi-step book submission flow (`bookAsked → authorAsked → descriptionAsked → imageAsked → finished`). This state is **not persisted** to MongoDB (in-progress migration on `mongo_db_instead_of_memory` branch).
-- **`telegramPoll`** — tracks the active Telegram native poll (poll ID, participant count, who has voted).
+- **Book gathering** — `/start_vote` creates a session and DMs subscribers; each
+  participant's multi-step submission (`book → author → description → image →
+  done`, or `skipped`) is persisted on every step.
+- **Voting** — a Telegram native poll; votes are recorded with `$addToSet`, and
+  the poll closes on its deadline or once all eligible subscribers have voted.
+- **Recovery loop** (`bot/recovery.go`) — a single ~15s ticker is the only
+  driver of deadlines: it loads the active session, sends due reminders, and
+  advances gathering→voting and poll close from the session's persisted
+  timestamps. This makes restart-resume identical to normal operation; there are
+  no per-deadline `time.Sleep` goroutines.
 
-The main loop in `bot.Run()` dispatches Telegram updates: commands (`/subscribe`, `/start_vote`, `/skip`, `/help`) to handlers, free-text messages to `handleParticipantAnswer`, and `PollAnswer` updates to vote counting.
+The main loop in `bot.Run()` dispatches Telegram updates: commands (`/subscribe`,
+`/start_vote`, `/skip`, `/help`) to handlers, free-text messages to
+`handleUserMsg`, and `PollAnswer` updates to vote counting. Phase transitions are
+serialized under `bot.mu`.
 
 ### Repository layer
 
-Both repositories (`SubscriberRepository`, `SettingsRepository`) take `*mongo.Database` directly. `GetSubscriberById` returns `(nil, nil)` when the subscriber is not found (uses `mongo.ErrNoDocuments` internally).
+The repositories (`SubscriberRepository`, `SettingsRepository`,
+`SessionRepository`) take `*mongo.Database` directly. Lookups return `(nil, nil)`
+when not found (e.g. `GetSubscriberById`, `GetActiveSession`). `SessionRepository`
+enforces a single active session via a unique partial index on an internal
+`activeLock` field; `EnsureIndexes` is called at startup from `cmd/main.go`.
 
 ### Testing
 

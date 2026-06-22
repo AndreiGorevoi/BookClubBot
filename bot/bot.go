@@ -63,6 +63,9 @@ func (b *Bot) Run() {
 
 	b.cfg.GroupId = int64(groupId)
 
+	// Drive deadlines and resume any in-flight round from persisted state.
+	b.startRecoveryLoop()
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = b.cfg.LongPollingTimeout
 
@@ -249,8 +252,8 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 		b.sendMessage(p.SubscriberID, b.messages.PleaseSuggestBookTitle)
 	}
 
-	b.deadlineNotificationBookGathering(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second)
-	b.runTelegramPollFlowAfterDelay(time.Duration(b.cfg.TimeToGatherBooks) * time.Second)
+	// The recovery loop drives the gathering reminder and the move to voting
+	// from the session's persisted deadlines.
 	return nil
 }
 
@@ -396,7 +399,7 @@ func (b *Bot) handlePollAnswer(answer *tgbotapi.PollAnswer) {
 	if err != nil || updated == nil || updated.Voting == nil {
 		return
 	}
-	if len(updated.Voting.VoterIDs) >= updated.Voting.TotalParticipants {
+	if updated.Voting.TotalParticipants > 0 && len(updated.Voting.VoterIDs) >= updated.Voting.TotalParticipants {
 		b.closeTelegramPoll()
 	}
 }
@@ -464,14 +467,6 @@ func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
 	}
 }
 
-// runTelegramPollFlowAfterDelay runs runTelegramPollFlow after a delay.
-func (b *Bot) runTelegramPollFlowAfterDelay(delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		b.runTelegramPollFlow()
-	}()
-}
-
 // runTelegramPollFlow ends the active book gathering and starts a telegram poll.
 // It claims the transition under b.mu by flipping the session to the voting
 // status; only the first caller that sees a gathering session proceeds.
@@ -506,8 +501,8 @@ func (b *Bot) runTelegramPollFlow() {
 		return
 	}
 
-	b.deadlineNotificationTelegramPoll(time.Duration(b.cfg.TimeForTelegramPoll-b.cfg.NotifyBeforePoll) * time.Second)
-	b.closeTelegramPollAfterDelay(time.Duration(b.cfg.TimeForTelegramPoll) * time.Second)
+	// The recovery loop drives the poll reminder and the close from the voting
+	// sub-document's persisted deadline.
 }
 
 // runTelegramPoll creates and starts a poll for choosing a book in the group,
@@ -552,34 +547,28 @@ func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
 	return b.sessionRepository.StartVoting(context.Background(), session.ID, voting)
 }
 
-// closeTelegramPollAfterDelay closes the poll after a given delay.
-func (b *Bot) closeTelegramPollAfterDelay(delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		b.closeTelegramPoll()
-	}()
-}
-
 // closeTelegramPoll stops the poll, records the winner(s) and completes the
-// session. The critical section runs under b.mu so a deadline goroutine and an
+// session. The state-changing section runs under b.mu so a deadline tick and an
 // all-voted close cannot both drive it. The session is completed only AFTER
 // StopPoll succeeds: a failed StopPoll leaves it in voting so the close can be
-// retried (by a later vote, or PR 2b's recovery loop) instead of stranding an
-// open poll with no winner and a held active lock.
+// retried (by a later vote, or the recovery loop) instead of stranding an open
+// poll with no winner and a held active lock. announceWinner runs after the
+// lock is released — it is a plain group message and need not hold the lock.
 func (b *Bot) closeTelegramPoll() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if b.cfg.GroupId == 0 {
+		b.mu.Unlock()
 		log.Println("cannot close a telegram poll as GroupId is not innit")
 		return
 	}
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
+		b.mu.Unlock()
 		log.Printf("cannot get active session: %v", err)
 		return
 	}
 	if session == nil || session.Status != models.StatusVoting || session.Voting == nil {
+		b.mu.Unlock()
 		log.Print("there is not an active poll, cannot close it")
 		return
 	}
@@ -592,6 +581,7 @@ func (b *Bot) closeTelegramPoll() {
 	}
 	res, err := b.tgBot.StopPoll(finishPoll)
 	if err != nil {
+		b.mu.Unlock()
 		log.Printf("ERROR: %s", err)
 		return
 	}
@@ -601,10 +591,16 @@ func (b *Bot) closeTelegramPoll() {
 			log.Printf("cannot save winners: %v", err)
 		}
 	}
+	if err := b.sessionRepository.SetVotingClosed(context.Background(), session.ID, time.Now().UTC()); err != nil {
+		log.Printf("cannot stamp poll close time: %v", err)
+	}
 	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCompleted); err != nil {
+		b.mu.Unlock()
 		log.Printf("cannot complete session: %v", err)
 		return
 	}
+	b.mu.Unlock()
+
 	b.announceWinner(&res)
 }
 
@@ -671,48 +667,25 @@ func (b *Bot) pollOptionFor(bk *models.Book) string {
 	return fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, bk.Title, b.messages.AuthorLabel, bk.Author)
 }
 
-// deadlineNotificationBookGathering notifies participants who have not finished
-// before the gathering deadline. Delay is taken from a config.
-func (b *Bot) deadlineNotificationBookGathering(delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-
-		session, err := b.sessionRepository.GetActiveSession(context.Background())
-		if err != nil || session == nil || session.Status != models.StatusGathering {
-			return
+// notifyGatheringDeadline messages participants who have not finished before
+// the gathering deadline.
+func (b *Bot) notifyGatheringDeadline(session *models.BookClubSession) {
+	txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
+	for _, p := range session.Gathering.Participants {
+		if p.Step != models.StepDone && p.Step != models.StepSkipped {
+			b.sendMessage(p.SubscriberID, txt)
 		}
-		var toNotify []int64
-		for _, p := range session.Gathering.Participants {
-			if p.Step != models.StepDone && p.Step != models.StepSkipped {
-				toNotify = append(toNotify, p.SubscriberID)
-			}
-		}
-
-		txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
-		for _, id := range toNotify {
-			b.sendMessage(id, txt)
-		}
-	}()
+	}
 }
 
-// deadlineNotificationTelegramPoll notifies the group before the poll deadline.
-// Delay is taken from a config.
-func (b *Bot) deadlineNotificationTelegramPoll(delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-
-		if b.cfg.GroupId == 0 {
-			log.Println("cannot announce the deadline as GroupId is not innit")
-			return
-		}
-		session, err := b.sessionRepository.GetActiveSession(context.Background())
-		if err != nil || session == nil || session.Status != models.StatusVoting {
-			return
-		}
-
-		txt := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
-		b.sendMessage(b.cfg.GroupId, txt)
-	}()
+// notifyPollDeadline messages the group before the poll deadline.
+func (b *Bot) notifyPollDeadline() {
+	if b.cfg.GroupId == 0 {
+		log.Println("cannot announce the deadline as GroupId is not innit")
+		return
+	}
+	txt := fmt.Sprintf(b.messages.VotingEndsInHours, (time.Duration(b.cfg.NotifyBeforePoll) * time.Second).Hours())
+	b.sendMessage(b.cfg.GroupId, txt)
 }
 
 // findParticipant returns the participant with the given id, or nil.

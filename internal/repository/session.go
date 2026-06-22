@@ -232,6 +232,11 @@ func (s *SessionRepository) SetVotingNotified(ctx context.Context, id primitive.
 	return s.setField(ctx, id, "voting.notifiedAt", at.UTC())
 }
 
+// SetVotingClosed stamps the time the poll was closed.
+func (s *SessionRepository) SetVotingClosed(ctx context.Context, id primitive.ObjectID, at time.Time) error {
+	return s.setField(ctx, id, "voting.closedAt", at.UTC())
+}
+
 // ListPastSessions returns completed sessions, newest first, up to limit
 // (limit <= 0 means no limit).
 func (s *SessionRepository) ListPastSessions(ctx context.Context, limit int64) ([]*models.BookClubSession, error) {

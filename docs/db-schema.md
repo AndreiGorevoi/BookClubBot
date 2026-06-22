@@ -56,14 +56,15 @@ Single-document collection. Stores bot-level runtime settings that must survive 
 
 ---
 
-## Models defined but not yet persisted
+## Session models — earlier draft (historical)
 
-> **Superseded.** The session schema below is an earlier draft. The authoritative
-> design for the book-club round (gathering → voting → reading) and its MongoDB
-> schema now lives in [`book-club-flow.md`](./book-club-flow.md). Follow that doc
-> for the feature; the section below is kept only for historical reference.
+> **Superseded.** The `book_club_sessions` collection is now live, but the schema
+> sketched below is an **earlier draft** and no longer matches the code. The
+> authoritative design for the book-club round (gathering → voting → reading) and
+> its MongoDB schema lives in [`book-club-flow.md`](./book-club-flow.md). The
+> section below is kept only for historical reference.
 
-The following structs exist in `internal/models/mongodb.go` and have BSON tags, but there is currently **no repository or collection** wired up for them. They represent the intended next phase of the schema (replacing in-memory state with MongoDB).
+The following describes the original draft structs in `internal/models/mongodb.go`. They have since been reworked and persisted via `SessionRepository`; see `book-club-flow.md` for the current shape.
 
 ### `BookClubSession` (planned collection: `book_club_sessions`)
 
@@ -155,4 +156,4 @@ Top-level document for one complete voting round — from opening book suggestio
 |---|---|---|
 | `subscribers` | **Live** | Full CRUD via `SubscriberRepository` |
 | `settings` | **Live** | Single-document store for `groupId` |
-| `book_club_sessions` | **Planned** | Models defined; no repository yet. Session state is currently held in-memory in `bot.bookGathering` and `bot.telegramPoll` and lost on restart. |
+| `book_club_sessions` | **Live** | Full lifecycle via `SessionRepository`; the bot is DB-authoritative and resumes in-flight rounds after a restart. Schema and behavior: [`book-club-flow.md`](./book-club-flow.md). |
