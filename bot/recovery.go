@@ -12,6 +12,14 @@ import (
 // irrelevant for a book club measured in days. See docs/book-club-flow.md.
 const recoveryTickInterval = 15 * time.Second
 
+// wedgedVotingGrace is how long a session may legitimately sit in the voting
+// status with no voting sub-document — the window inside runTelegramPollFlow
+// between claiming the transition and StartVoting writing the sub-document
+// (media upload + poll send). Only past this grace is such a session treated as
+// wedged and cancelled, so the recovery loop never reaps a round that is
+// actively launching its poll.
+const wedgedVotingGrace = 2 * time.Minute
+
 // startRecoveryLoop launches the single goroutine that drives the active
 // session's lifecycle from its persisted timestamps. It is the only mechanism
 // that advances deadlines, so resuming after a restart is identical to normal
@@ -72,9 +80,16 @@ func (b *Bot) recoverGathering(session *models.BookClubSession, now time.Time) {
 // active lock.
 func (b *Bot) recoverVoting(session *models.BookClubSession, now time.Time) {
 	if session.Voting == nil {
-		log.Printf("recovery: voting session %s has no voting sub-document, cancelling", session.ID.Hex())
-		if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCancelled); err != nil {
-			log.Printf("recovery: cannot cancel wedged session: %v", err)
+		// status=voting with no voting sub-document is legitimate while
+		// runTelegramPollFlow is mid-launch; only cancel once it has stayed that
+		// way past the grace period (i.e. the launch crashed), so we never reap a
+		// round that is actively starting its poll. UpdatedAt is stamped when the
+		// status was flipped to voting.
+		if now.Sub(session.UpdatedAt) > wedgedVotingGrace {
+			log.Printf("recovery: voting session %s has no voting sub-document past grace, cancelling", session.ID.Hex())
+			if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCancelled); err != nil {
+				log.Printf("recovery: cannot cancel wedged session: %v", err)
+			}
 		}
 		return
 	}
@@ -86,7 +101,8 @@ func (b *Bot) recoverVoting(session *models.BookClubSession, now time.Time) {
 		}
 	}
 
-	if len(session.Voting.VoterIDs) >= session.Voting.TotalParticipants || !now.Before(session.Voting.Deadline) {
+	allVoted := session.Voting.TotalParticipants > 0 && len(session.Voting.VoterIDs) >= session.Voting.TotalParticipants
+	if allVoted || !now.Before(session.Voting.Deadline) {
 		b.closeTelegramPoll()
 	}
 }

@@ -54,20 +54,38 @@ func (f *fakeSessionRepo) SetVotingClosed(context.Context, primitive.ObjectID, t
 	return nil
 }
 
-func TestRecoverVotingCancelsWedgedSession(t *testing.T) {
-	fake := &fakeSessionRepo{}
-	b := &Bot{sessionRepository: fake}
+func TestRecoverVotingWedgedSession(t *testing.T) {
+	now := time.Now().UTC()
 
-	// status=voting but no voting sub-document: the poll never started.
-	session := &models.BookClubSession{
-		ID:     primitive.NewObjectID(),
-		Status: models.StatusVoting,
-		Voting: nil,
-	}
+	t.Run("recent voting==nil is mid-launch, not cancelled", func(t *testing.T) {
+		fake := &fakeSessionRepo{}
+		b := &Bot{sessionRepository: fake}
+		session := &models.BookClubSession{
+			ID:        primitive.NewObjectID(),
+			Status:    models.StatusVoting,
+			Voting:    nil,
+			UpdatedAt: now.Add(-5 * time.Second), // within grace
+		}
 
-	b.recoverVoting(session, time.Now().UTC())
+		b.recoverVoting(session, now)
 
-	assert.Equal(t, []string{models.StatusCancelled}, fake.statusSet,
-		"a voting session with no voting sub-document should be cancelled")
-	assert.Equal(t, 0, fake.votingClosed, "wedged session must not be closed")
+		assert.Empty(t, fake.statusSet, "a round still launching its poll must not be cancelled")
+	})
+
+	t.Run("stale voting==nil past grace is cancelled", func(t *testing.T) {
+		fake := &fakeSessionRepo{}
+		b := &Bot{sessionRepository: fake}
+		session := &models.BookClubSession{
+			ID:        primitive.NewObjectID(),
+			Status:    models.StatusVoting,
+			Voting:    nil,
+			UpdatedAt: now.Add(-wedgedVotingGrace - time.Second), // past grace
+		}
+
+		b.recoverVoting(session, now)
+
+		assert.Equal(t, []string{models.StatusCancelled}, fake.statusSet,
+			"a wedged voting session should be cancelled to release the lock")
+		assert.Equal(t, 0, fake.votingClosed, "wedged session must not be closed")
+	})
 }

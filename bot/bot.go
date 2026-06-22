@@ -399,7 +399,7 @@ func (b *Bot) handlePollAnswer(answer *tgbotapi.PollAnswer) {
 	if err != nil || updated == nil || updated.Voting == nil {
 		return
 	}
-	if len(updated.Voting.VoterIDs) >= updated.Voting.TotalParticipants {
+	if updated.Voting.TotalParticipants > 0 && len(updated.Voting.VoterIDs) >= updated.Voting.TotalParticipants {
 		b.closeTelegramPoll()
 	}
 }
@@ -548,25 +548,27 @@ func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
 }
 
 // closeTelegramPoll stops the poll, records the winner(s) and completes the
-// session. The critical section runs under b.mu so a deadline goroutine and an
+// session. The state-changing section runs under b.mu so a deadline tick and an
 // all-voted close cannot both drive it. The session is completed only AFTER
 // StopPoll succeeds: a failed StopPoll leaves it in voting so the close can be
-// retried (by a later vote, or PR 2b's recovery loop) instead of stranding an
-// open poll with no winner and a held active lock.
+// retried (by a later vote, or the recovery loop) instead of stranding an open
+// poll with no winner and a held active lock. announceWinner runs after the
+// lock is released — it is a plain group message and need not hold the lock.
 func (b *Bot) closeTelegramPoll() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if b.cfg.GroupId == 0 {
+		b.mu.Unlock()
 		log.Println("cannot close a telegram poll as GroupId is not innit")
 		return
 	}
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
+		b.mu.Unlock()
 		log.Printf("cannot get active session: %v", err)
 		return
 	}
 	if session == nil || session.Status != models.StatusVoting || session.Voting == nil {
+		b.mu.Unlock()
 		log.Print("there is not an active poll, cannot close it")
 		return
 	}
@@ -579,6 +581,7 @@ func (b *Bot) closeTelegramPoll() {
 	}
 	res, err := b.tgBot.StopPoll(finishPoll)
 	if err != nil {
+		b.mu.Unlock()
 		log.Printf("ERROR: %s", err)
 		return
 	}
@@ -592,9 +595,12 @@ func (b *Bot) closeTelegramPoll() {
 		log.Printf("cannot stamp poll close time: %v", err)
 	}
 	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCompleted); err != nil {
+		b.mu.Unlock()
 		log.Printf("cannot complete session: %v", err)
 		return
 	}
+	b.mu.Unlock()
+
 	b.announceWinner(&res)
 }
 
