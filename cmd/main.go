@@ -40,9 +40,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Session persistence layer. The bot does not consume it yet (wiring lands
-	// in a follow-up), but the indexes — notably the unique "one active session"
-	// index — must exist before sessions are written, so create them at startup.
+	// Session persistence layer. Its indexes — notably the unique "one active
+	// session" index — must exist before sessions are written, so create them
+	// at startup.
 	sessionRepository, err := repository.NewSessionRepository(db)
 	if err != nil {
 		log.Fatal(err)
@@ -51,6 +51,6 @@ func main() {
 		log.Fatalf("error ensuring session indexes: '%v'", err)
 	}
 
-	b := bot.NewBot(cfg, msg, subRepository, settingsRepository)
+	b := bot.NewBot(cfg, msg, subRepository, settingsRepository, sessionRepository)
 	b.Run()
 }
