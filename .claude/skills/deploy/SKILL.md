@@ -54,6 +54,13 @@ After pushing, tell the user:
 - The tag that was created (e.g. `v0.4.7`)
 - The Docker image that will be produced: `beskar18/book-club-bot:v0.4.7`
 - How to watch the CI run: `gh run list --limit 3` or the GitHub Actions URL
+- That building/pushing the image does NOT redeploy a running env — the target
+  must pull the new tag (or be redeployed) to pick it up.
+- For a **sandbox smoke test**, remind them of the prerequisites that otherwise
+  silently block testing: a `telegrammApiKey`, a reachable MongoDB, the bot
+  added to a group (sets `groupId`), and a **short-duration config** — prod uses
+  86400s (24h) for gather/poll, so a round there takes two days; point
+  `APP_ENV` at the dev config (60s) to exercise a full round in minutes.
 
 ### Step 5: Optional — watch CI
 
