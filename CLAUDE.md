@@ -112,5 +112,7 @@ Closes #N
 - [ ] ...
 
 ---
-🤖 Created by [Claude Code](https://claude.ai/code) · Model: claude-sonnet-4-6
+🤖 Created by [Claude Code](https://claude.ai/code) · Model: <active model id>
 ```
+
+Fill `Model:` with the model actually in use when opening the PR — do not hardcode a specific id here, as it goes stale.
