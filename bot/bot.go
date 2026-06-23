@@ -17,6 +17,11 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// errNotEnoughBooks signals that a poll cannot start because fewer than two
+// books were gathered. runTelegramPollFlow uses it to notify the group instead
+// of silently cancelling the round.
+var errNotEnoughBooks = errors.New("cannot run a poll as there is less than 2 books")
+
 type Bot struct {
 	// mu serializes the phase transitions (gathering → voting → completed) so
 	// that a deadline goroutine and the main update loop cannot both drive the
@@ -493,8 +498,12 @@ func (b *Bot) runTelegramPollFlow() {
 
 	if err := b.runTelegramPoll(session); err != nil {
 		log.Printf("ERROR: cannot run poll: %v\n", err)
-		// Could not start a poll (e.g. fewer than 2 books). End the round so a
-		// new one can be started.
+		// Could not start a poll. End the round so a new one can be started, and
+		// tell the group why when the cause is too few books (rather than
+		// silently cancelling).
+		if errors.Is(err, errNotEnoughBooks) && b.cfg.GroupId != 0 {
+			b.sendMessage(b.cfg.GroupId, b.messages.NotEnoughBooksVotingCancelled)
+		}
 		if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCancelled); err != nil {
 			log.Printf("cannot cancel session: %v", err)
 		}
@@ -514,7 +523,7 @@ func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
 
 	books := b.extractBooks(session)
 	if len(books) < 2 {
-		return errors.New("cannot run a poll as there is less than 2 books")
+		return errNotEnoughBooks
 	}
 
 	if len(books) > 10 {

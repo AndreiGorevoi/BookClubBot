@@ -28,6 +28,7 @@ type LocalizedMessages struct {
 	WeHaveAWinner                      string `json:"we_have_a_winner"`
 	NoClearWinnerManualVoting          string `json:"no_clear_winner_manual_voting"`
 	ChooseUpToTwoBooks                 string `json:"choose_up_to_two_books"`
+	NotEnoughBooksVotingCancelled      string `json:"not_enough_books_voting_cancelled"`
 	BookLabel                          string `json:"book_label"`
 	AuthorLabel                        string `json:"author_label"`
 	BookSubmissionDeadline             string `json:"book_submission_deadline"`
