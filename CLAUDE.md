@@ -89,6 +89,23 @@ Repository tests are integration tests — they connect to a real MongoDB at `lo
 
 CI runs MongoDB as a service container (see `.github/workflows/`). Docker image is pushed on git tag.
 
+## IDE tooling (JetBrains MCP)
+
+This project is developed in a JetBrains IDE (`idea`) whose built-in MCP server
+runs in the background while the IDE is open. When it's available, prefer the MCP
+tools for **semantic** code operations — they use the IDE's code model (PSI, type
+info) instead of text matching:
+
+- Symbol lookup / navigation → `search_symbol`, `get_symbol_info`
+- Find callers / call analysis → `analyze_calls`
+- Rename across the project → `rename_refactoring` (not text substitution)
+- IDE inspections / problems → `get_file_problems`, `run_inspection_kts`
+- Build / reformat → `build_project`, `reformat_file`
+
+For plain reads, text search, and small edits, the native tools (Read, Grep,
+Edit) are fine and usually faster. If the IDE/MCP is unavailable, fall back to
+native tools for everything.
+
 ## Issues and pull requests
 
 Work follows an issue → PR → review flow:

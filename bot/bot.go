@@ -22,6 +22,14 @@ import (
 // of silently cancelling the round.
 var errNotEnoughBooks = errors.New("cannot run a poll as there is less than 2 books")
 
+// Inline-button callback payloads used during book gathering. They are short
+// (well under Telegram's 64-byte limit); the participant is identified by the
+// callback's From.ID, so the payload only needs to name the action.
+const (
+	callbackSkipGathering = "g:skip"
+	callbackNoCover       = "g:nocover"
+)
+
 type Bot struct {
 	// mu serializes the phase transitions (gathering → voting → completed) so
 	// that a deadline goroutine and the main update loop cannot both drive the
@@ -77,6 +85,11 @@ func (b *Bot) Run() {
 	updates := b.tgBot.GetUpdatesChan(u)
 
 	for update := range updates {
+		if update.CallbackQuery != nil {
+			b.handleCallback(update.CallbackQuery)
+			continue
+		}
+
 		if update.Message != nil {
 			if update.Message.NewChatMembers != nil {
 				b.handleBotAdded(update)
@@ -254,7 +267,8 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 	}
 
 	for _, p := range participants {
-		b.sendMessage(p.SubscriberID, b.messages.PleaseSuggestBookTitle)
+		// The title prompt carries the "don't participate" button.
+		b.sendWithKeyboard(p.SubscriberID, b.messages.PleaseSuggestBookTitle, b.skipKeyboard())
 	}
 
 	// The recovery loop drives the gathering reminder and the move to voting
@@ -294,7 +308,9 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 }
 
 // handleParticipantAnswer advances one participant's submission flow and
-// persists each step.
+// persists each step. Each step is its own message; the only inline keyboards
+// are the "don't participate" button on the title prompt (sent from
+// handleStartVote) and the "no cover" button on the photo step.
 func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models.Participant, update *tgbotapi.Update) {
 	uid := update.Message.From.ID
 
@@ -320,7 +336,8 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 		p.Book.Description = update.Message.Text
 		p.Step = models.StepImage
 		b.persistParticipant(session.ID, p)
-		b.sendMessage(uid, b.messages.AttachCoverPhoto)
+		// The cover is optional, so this step offers the "no cover" button.
+		b.sendWithKeyboard(uid, b.messages.AttachCoverPhoto, b.noCoverKeyboard())
 
 	case models.StepImage:
 		hasPhoto := update.Message.Photo != nil
@@ -328,21 +345,27 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
 			p.Book.PhotoID = photo.FileID
 		}
-		now := time.Now().UTC()
-		p.Step = models.StepDone
-		p.SubmittedAt = &now
-		b.persistParticipant(session.ID, p)
-
-		if hasPhoto {
-			b.sendMessage(uid, b.messages.BookAddedToNextVoting)
-		} else {
-			b.sendMessage(uid, b.messages.ImageMissingBookAdded)
-		}
-		log.Printf("user: %s %s suggested a book.\n", p.FirstName, p.LastName)
+		b.finishGathering(session.ID, p, hasPhoto)
 
 	case models.StepDone:
 		b.sendMessage(uid, b.messages.VotingAlreadyCompleted)
 	}
+}
+
+// finishGathering completes a participant's submission (with or without a
+// cover): it marks them done, confirms, and persists. Shared by the image step
+// and the "no cover" button.
+func (b *Bot) finishGathering(sessionID primitive.ObjectID, p *models.Participant, hasPhoto bool) {
+	now := time.Now().UTC()
+	p.Step = models.StepDone
+	p.SubmittedAt = &now
+	b.persistParticipant(sessionID, p)
+	if hasPhoto {
+		b.sendMessage(p.SubscriberID, b.messages.BookAddedToNextVoting)
+	} else {
+		b.sendMessage(p.SubscriberID, b.messages.ImageMissingBookAdded)
+	}
+	log.Printf("user: %s %s suggested a book.\n", p.FirstName, p.LastName)
 }
 
 // handleSkip removes a user from the ongoing book gathering.
@@ -366,16 +389,88 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 		return
 	}
 
-	p.Step = models.StepSkipped
-	p.Book = nil
-	b.persistParticipant(session.ID, p)
-	b.sendMessage(uid, b.messages.UnableToSuggestBook)
-	log.Printf("user: %d skiped a book gathering.\n", uid)
+	b.declineGathering(session.ID, p)
 
 	// session already reflects the skip (p points into it). The last pending
 	// user skipping should end the gathering too.
 	if allBooksChosen(session) {
 		b.runTelegramPollFlow()
+	}
+}
+
+// declineGathering marks a participant as not suggesting a book this round,
+// confirms, and persists. Shared by the /skip command and the "don't
+// participate" button.
+func (b *Bot) declineGathering(sessionID primitive.ObjectID, p *models.Participant) {
+	p.Step = models.StepSkipped
+	p.Book = nil
+	b.persistParticipant(sessionID, p)
+	b.sendMessage(p.SubscriberID, b.messages.UnableToSuggestBook)
+	log.Printf("user: %d skiped a book gathering.\n", p.SubscriberID)
+}
+
+// handleCallback handles inline-button presses during book gathering. The
+// participant is identified by the caller's id (the buttons live in DMs), so a
+// press that arrives after the round has moved on is answered with a toast and
+// ignored. Exactly one answer is sent per press to stop the button spinner.
+func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
+	uid := cq.From.ID
+
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
+		log.Printf("cannot get active session for callback: %v", err)
+		b.answerCallback(cq.ID, "")
+		return
+	}
+	if session == nil || session.Status != models.StatusGathering {
+		b.answerCallback(cq.ID, b.messages.VotingNotStartedOrEnded)
+		return
+	}
+
+	p := findParticipant(session, uid)
+	if p == nil || p.Step == models.StepSkipped || p.Step == models.StepDone {
+		b.answerCallback(cq.ID, b.messages.VotingAlreadyCompleted)
+		return
+	}
+
+	switch cq.Data {
+	case callbackSkipGathering:
+		// The skip button lives on the title prompt. Honour it only before the
+		// user has started answering, so a later press of the still-visible button
+		// can't wipe an in-progress submission (the /skip command still bails at
+		// any step).
+		if p.Step != models.StepBook {
+			b.answerCallback(cq.ID, "") // stale button; nothing to do
+			return
+		}
+		b.clearPressedKeyboard(cq)
+		b.declineGathering(session.ID, p)
+	case callbackNoCover:
+		if p.Step != models.StepImage {
+			b.answerCallback(cq.ID, "") // stale button; nothing to do
+			return
+		}
+		b.clearPressedKeyboard(cq)
+		b.finishGathering(session.ID, p, false)
+	default:
+		b.answerCallback(cq.ID, "")
+		return
+	}
+
+	b.answerCallback(cq.ID, "")
+
+	// p points into session, so it already reflects the change. The last pending
+	// participant finishing/declining should end the gathering.
+	if allBooksChosen(session) {
+		b.runTelegramPollFlow()
+	}
+}
+
+// answerCallback acknowledges a callback query, stopping the button's loading
+// spinner. A non-empty text is shown to the user as a small toast.
+func (b *Bot) answerCallback(id, text string) {
+	if _, err := b.tgBot.Request(tgbotapi.NewCallback(id, text)); err != nil {
+		log.Printf("cannot answer callback %s: %v", id, err)
 	}
 }
 
@@ -739,6 +834,55 @@ func (b *Bot) persistParticipant(id primitive.ObjectID, p *models.Participant) {
 func (b *Bot) sendMessage(userID int64, text string) {
 	msg := tgbotapi.NewMessage(userID, text)
 	b.tgBot.Send(msg)
+}
+
+// skipKeyboard is the inline keyboard shown on the first gathering prompt: a
+// single button that declines to suggest a book (same effect as /skip).
+func (b *Bot) skipKeyboard() *tgbotapi.InlineKeyboardMarkup {
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnSkipGathering, callbackSkipGathering),
+		),
+	)
+	return &kb
+}
+
+// noCoverKeyboard is the inline keyboard shown on the cover-photo step: a single
+// button that finishes the submission without an image.
+func (b *Bot) noCoverKeyboard() *tgbotapi.InlineKeyboardMarkup {
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnNoCover, callbackNoCover),
+		),
+	)
+	return &kb
+}
+
+// sendWithKeyboard sends a message with an inline keyboard attached.
+func (b *Bot) sendWithKeyboard(userID int64, text string, kb *tgbotapi.InlineKeyboardMarkup) {
+	msg := tgbotapi.NewMessage(userID, text)
+	if kb != nil {
+		msg.ReplyMarkup = *kb
+	}
+	if _, err := b.tgBot.Send(msg); err != nil {
+		log.Printf("cannot send message with keyboard to %d: %v", userID, err)
+	}
+}
+
+// clearPressedKeyboard removes the inline keyboard from the message a callback
+// button was pressed on, so the used button doesn't linger. It sends an
+// explicit empty keyboard array: a nil InlineKeyboard would serialize to
+// `null`, which Telegram rejects ("field inline_keyboard must be of type
+// Array").
+func (b *Bot) clearPressedKeyboard(cq *tgbotapi.CallbackQuery) {
+	if cq.Message == nil {
+		return
+	}
+	empty := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID, empty)
+	if _, err := b.tgBot.Request(edit); err != nil {
+		log.Printf("cannot clear keyboard on message %d: %v", cq.Message.MessageID, err)
+	}
 }
 
 // processCommand is a wrapper function that helps to consolidate printing of Something Wrong messages

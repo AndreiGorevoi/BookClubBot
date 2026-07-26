@@ -41,6 +41,8 @@ type LocalizedMessages struct {
 	WelcomeBack                        string `json:"welcome_back"`
 	Unsubsribed                        string `json:"unsubsribed"`
 	GreetingMessage                    string `json:"greeting_message"`
+	BtnSkipGathering                   string `json:"btn_skip_gathering"`
+	BtnNoCover                         string `json:"btn_no_cover"`
 }
 
 func LoadMessaged() (*LocalizedMessages, error) {
