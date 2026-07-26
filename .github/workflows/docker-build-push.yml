@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "*"
+  # Manual sandbox deploy of any branch/tag/SHA, without creating a git tag.
+  # Builds the chosen ref, publishes the mutable `:sandbox` image, and redeploys
+  # the sandbox environment only (never prod, never `:latest`).
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to build and deploy to sandbox"
+        required: true
+        default: "main"
 
 jobs:
   build:
@@ -26,6 +35,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          # On a tag push, github.event.inputs.ref is empty so we fall back to the
+          # pushed tag; on a manual dispatch we build the ref the user picked.
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -55,20 +68,51 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # Decide which image tags to publish and whether this is a prod release.
+      #   - every build moves the mutable `:sandbox` tag (what the sandbox
+      #     environment's Source Image tracks), so sandbox always runs the build.
+      #   - a manual dispatch also gets a traceable `:sandbox-<sha>` tag and is
+      #     never a release.
+      #   - a tag push publishes the version tag; a release tag (no '-') also
+      #     moves `:latest` (what prod tracks) and flags a prod redeploy.
+      - name: Determine image tags
+        id: meta
+        run: |
+          IMAGE=beskar18/book-club-bot
+          TAGS="$IMAGE:sandbox"
+          IS_RELEASE=false
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAGS="$TAGS"$'\n'"$IMAGE:sandbox-${GITHUB_SHA::7}"
+          else
+            TAGS="$TAGS"$'\n'"$IMAGE:${GITHUB_REF_NAME}"
+            if [[ "${GITHUB_REF_NAME}" != *-* ]]; then
+              TAGS="$TAGS"$'\n'"$IMAGE:latest"
+              IS_RELEASE=true
+            fi
+          fi
+
+          {
+            echo "tags<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+            echo "is_release=$IS_RELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Publishing tags:"
+          echo "$TAGS"
+          echo "is_release=$IS_RELEASE"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: beskar18/book-club-bot:${{ github.ref_name }}
+          tags: ${{ steps.meta.outputs.tags }}
 
-      - name: Tag as latest (release tags only, no pre-releases)
-        if: ${{ !contains(github.ref_name, '-') }}
-        run: |
-          docker pull beskar18/book-club-bot:${{ github.ref_name }}
-          docker tag beskar18/book-club-bot:${{ github.ref_name }} beskar18/book-club-bot:latest
-          docker push beskar18/book-club-bot:latest
-
+      # Runs on every build (tag push and manual dispatch). The sandbox service's
+      # Source Image tracks `:sandbox`, so the redeploy re-pulls the image just
+      # published above. Best-effort: a sandbox hiccup must not fail a release.
       - name: Trigger Railway sandbox redeploy
         continue-on-error: true
         env:
@@ -96,8 +140,10 @@ jobs:
           fi
           echo "Railway redeploy triggered successfully"
 
-      - name: Trigger Railway production redeploy (release tags only, no pre-releases)
-        if: ${{ !contains(github.ref_name, '-') }}
+      # Only release tags (no '-') redeploy prod, which tracks `:latest`. Manual
+      # dispatches set is_release=false and therefore never touch prod.
+      - name: Trigger Railway production redeploy (release tags only)
+        if: ${{ steps.meta.outputs.is_release == 'true' }}
         env:
           # Must be an ACCOUNT or WORKSPACE token (sent as Authorization: Bearer).
           # Project tokens use the Project-Access-Token header and CANNOT trigger
