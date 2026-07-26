@@ -25,6 +25,29 @@ func sessionWith(participants ...*models.Participant) *models.BookClubSession {
 	}
 }
 
+func TestGatheringKeyboards(t *testing.T) {
+	b := &Bot{messages: &message.LocalizedMessages{
+		BtnSkipGathering: "Skip",
+		BtnNoCover:       "No cover",
+	}}
+
+	t.Run("skip keyboard carries the skip callback", func(t *testing.T) {
+		kb := b.skipKeyboard()
+		btn := kb.InlineKeyboard[0][0]
+		assert.Equal(t, "Skip", btn.Text)
+		assert.NotNil(t, btn.CallbackData)
+		assert.Equal(t, callbackSkipGathering, *btn.CallbackData)
+	})
+
+	t.Run("no-cover keyboard carries the no-cover callback", func(t *testing.T) {
+		kb := b.noCoverKeyboard()
+		btn := kb.InlineKeyboard[0][0]
+		assert.Equal(t, "No cover", btn.Text)
+		assert.NotNil(t, btn.CallbackData)
+		assert.Equal(t, callbackNoCover, *btn.CallbackData)
+	})
+}
+
 func TestFindParticipant(t *testing.T) {
 	session := sessionWith(
 		&models.Participant{SubscriberID: 1},

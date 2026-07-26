@@ -62,6 +62,12 @@ type Participant struct {
 	Book         *Book      `bson:"book"`
 	InvitedAt    time.Time  `bson:"invitedAt"`
 	SubmittedAt  *time.Time `bson:"submittedAt"`
+
+	// PromptMessageID is the Telegram message id of the single "live" bot bubble
+	// in this participant's DM that the gathering flow edits in place across
+	// steps (see bot.editPrompt). Persisting it makes the in-place editing
+	// survive a restart, like the rest of the gathering state.
+	PromptMessageID int `bson:"promptMessageId"`
 }
 
 // Gathering is the book-collection phase (step 1).
