@@ -267,10 +267,8 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 	}
 
 	for _, p := range participants {
-		// The first prompt carries the "don't participate" button and becomes the
-		// live bubble that the rest of the flow edits in place; remember its id.
-		p.PromptMessageID = b.sendPrompt(p.SubscriberID, b.messages.PleaseSuggestBookTitle, b.skipKeyboard())
-		b.persistParticipant(session.ID, p)
+		// The title prompt carries the "don't participate" button.
+		b.sendWithKeyboard(p.SubscriberID, b.messages.PleaseSuggestBookTitle, b.skipKeyboard())
 	}
 
 	// The recovery loop drives the gathering reminder and the move to voting
@@ -310,7 +308,9 @@ func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
 }
 
 // handleParticipantAnswer advances one participant's submission flow and
-// persists each step.
+// persists each step. Each step is its own message; the only inline keyboards
+// are the "don't participate" button on the title prompt (sent from
+// handleStartVote) and the "no cover" button on the photo step.
 func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models.Participant, update *tgbotapi.Update) {
 	uid := update.Message.From.ID
 
@@ -318,30 +318,26 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 	case models.StepBook:
 		title := strings.TrimSpace(update.Message.Text)
 		if isBookAlreadyProposed(session, title) {
-			// A rejection is a one-off nudge, not part of the flow: leave the live
-			// bubble (still asking for a title, with the skip button) untouched.
 			b.sendMessage(uid, b.messages.BookAlreadyProposed)
 			return
 		}
 		p.Book = &models.Book{Title: title}
 		p.Step = models.StepAuthor
-		// Past the title, the "don't participate" button is gone: author and
-		// description are mandatory, so the live bubble carries no keyboard.
-		p.PromptMessageID = b.editPrompt(uid, p.PromptMessageID, b.messages.WhoIsAuthor, nil)
 		b.persistParticipant(session.ID, p)
+		b.sendMessage(uid, b.messages.WhoIsAuthor)
 
 	case models.StepAuthor:
 		p.Book.Author = update.Message.Text
 		p.Step = models.StepDescription
-		p.PromptMessageID = b.editPrompt(uid, p.PromptMessageID, b.messages.WriteBookDescription, nil)
 		b.persistParticipant(session.ID, p)
+		b.sendMessage(uid, b.messages.WriteBookDescription)
 
 	case models.StepDescription:
 		p.Book.Description = update.Message.Text
 		p.Step = models.StepImage
-		// The cover is optional, so this step offers the "no cover" button.
-		p.PromptMessageID = b.editPrompt(uid, p.PromptMessageID, b.messages.AttachCoverPhoto, b.noCoverKeyboard())
 		b.persistParticipant(session.ID, p)
+		// The cover is optional, so this step offers the "no cover" button.
+		b.sendWithKeyboard(uid, b.messages.AttachCoverPhoto, b.noCoverKeyboard())
 
 	case models.StepImage:
 		hasPhoto := update.Message.Photo != nil
@@ -357,19 +353,18 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 }
 
 // finishGathering completes a participant's submission (with or without a
-// cover): it marks them done, edits their live bubble to the final
-// confirmation (clearing the keyboard) and persists. Shared by the image step
+// cover): it marks them done, confirms, and persists. Shared by the image step
 // and the "no cover" button.
 func (b *Bot) finishGathering(sessionID primitive.ObjectID, p *models.Participant, hasPhoto bool) {
 	now := time.Now().UTC()
 	p.Step = models.StepDone
 	p.SubmittedAt = &now
-	text := b.messages.BookAddedToNextVoting
-	if !hasPhoto {
-		text = b.messages.ImageMissingBookAdded
-	}
-	p.PromptMessageID = b.editPrompt(p.SubscriberID, p.PromptMessageID, text, nil)
 	b.persistParticipant(sessionID, p)
+	if hasPhoto {
+		b.sendMessage(p.SubscriberID, b.messages.BookAddedToNextVoting)
+	} else {
+		b.sendMessage(p.SubscriberID, b.messages.ImageMissingBookAdded)
+	}
 	log.Printf("user: %s %s suggested a book.\n", p.FirstName, p.LastName)
 }
 
@@ -404,13 +399,13 @@ func (b *Bot) handleSkip(update *tgbotapi.Update) {
 }
 
 // declineGathering marks a participant as not suggesting a book this round,
-// edits their live bubble to the decline message (clearing the keyboard) and
-// persists. Shared by the /skip command and the "don't participate" button.
+// confirms, and persists. Shared by the /skip command and the "don't
+// participate" button.
 func (b *Bot) declineGathering(sessionID primitive.ObjectID, p *models.Participant) {
 	p.Step = models.StepSkipped
 	p.Book = nil
-	p.PromptMessageID = b.editPrompt(p.SubscriberID, p.PromptMessageID, b.messages.UnableToSuggestBook, nil)
 	b.persistParticipant(sessionID, p)
+	b.sendMessage(p.SubscriberID, b.messages.UnableToSuggestBook)
 	log.Printf("user: %d skiped a book gathering.\n", p.SubscriberID)
 }
 
@@ -440,12 +435,22 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 
 	switch cq.Data {
 	case callbackSkipGathering:
+		// The skip button lives on the title prompt. Honour it only before the
+		// user has started answering, so a later press of the still-visible button
+		// can't wipe an in-progress submission (the /skip command still bails at
+		// any step).
+		if p.Step != models.StepBook {
+			b.answerCallback(cq.ID, "") // stale button; nothing to do
+			return
+		}
+		b.clearPressedKeyboard(cq)
 		b.declineGathering(session.ID, p)
 	case callbackNoCover:
 		if p.Step != models.StepImage {
 			b.answerCallback(cq.ID, "") // stale button; nothing to do
 			return
 		}
+		b.clearPressedKeyboard(cq)
 		b.finishGathering(session.ID, p, false)
 	default:
 		b.answerCallback(cq.ID, "")
@@ -853,43 +858,31 @@ func (b *Bot) noCoverKeyboard() *tgbotapi.InlineKeyboardMarkup {
 	return &kb
 }
 
-// sendPrompt sends the participant's "live" gathering bubble with an optional
-// inline keyboard and returns its message id (0 on failure), so later steps can
-// edit it in place via editPrompt. Pass kb=nil for no keyboard.
-func (b *Bot) sendPrompt(userID int64, text string, kb *tgbotapi.InlineKeyboardMarkup) int {
+// sendWithKeyboard sends a message with an inline keyboard attached.
+func (b *Bot) sendWithKeyboard(userID int64, text string, kb *tgbotapi.InlineKeyboardMarkup) {
 	msg := tgbotapi.NewMessage(userID, text)
 	if kb != nil {
 		msg.ReplyMarkup = *kb
 	}
-	sent, err := b.tgBot.Send(msg)
-	if err != nil {
-		log.Printf("cannot send prompt to %d: %v", userID, err)
-		return 0
+	if _, err := b.tgBot.Send(msg); err != nil {
+		log.Printf("cannot send message with keyboard to %d: %v", userID, err)
 	}
-	return sent.MessageID
 }
 
-// editPrompt rewrites the participant's live bubble in place (text + keyboard),
-// so the DM shows one evolving message instead of a stream of new ones. Pass
-// kb=nil to clear the keyboard on a terminal step. If the message id is unknown
-// or the edit fails (e.g. the bubble is too old to edit), it falls back to
-// sending a fresh message and returns its id so the caller can persist it.
-func (b *Bot) editPrompt(userID int64, messageID int, text string, kb *tgbotapi.InlineKeyboardMarkup) int {
-	if messageID == 0 {
-		return b.sendPrompt(userID, text, kb)
+// clearPressedKeyboard removes the inline keyboard from the message a callback
+// button was pressed on, so the used button doesn't linger. It sends an
+// explicit empty keyboard array: a nil InlineKeyboard would serialize to
+// `null`, which Telegram rejects ("field inline_keyboard must be of type
+// Array").
+func (b *Bot) clearPressedKeyboard(cq *tgbotapi.CallbackQuery) {
+	if cq.Message == nil {
+		return
 	}
-	// A nil keyboard means "remove any existing buttons": editing with an empty
-	// inline markup ({"inline_keyboard":[]}) clears them.
-	markup := tgbotapi.NewInlineKeyboardMarkup()
-	if kb != nil {
-		markup = *kb
+	empty := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID, empty)
+	if _, err := b.tgBot.Request(edit); err != nil {
+		log.Printf("cannot clear keyboard on message %d: %v", cq.Message.MessageID, err)
 	}
-	edit := tgbotapi.NewEditMessageTextAndMarkup(userID, messageID, text, markup)
-	if _, err := b.tgBot.Send(edit); err != nil {
-		log.Printf("cannot edit prompt %d for %d, sending a new one: %v", messageID, userID, err)
-		return b.sendPrompt(userID, text, kb)
-	}
-	return messageID
 }
 
 // processCommand is a wrapper function that helps to consolidate printing of Something Wrong messages
