@@ -95,3 +95,32 @@ jobs:
             exit 1
           fi
           echo "Railway redeploy triggered successfully"
+
+      - name: Trigger Railway production redeploy (release tags only, no pre-releases)
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          # Must be an ACCOUNT or WORKSPACE token (sent as Authorization: Bearer).
+          # Project tokens use the Project-Access-Token header and CANNOT trigger
+          # deploys — they return "Not Authorized".
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          # Same project & service as sandbox (prod_ environment). Only the
+          # environmentId differs from the sandbox redeploy step above.
+          response=$(curl --silent --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Authorization: Bearer $RAILWAY_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data '{
+              "query": "mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) { serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId) }",
+              "variables": {
+                "environmentId": "529502cf-a952-4f64-a38b-596cf3220a54",
+                "serviceId": "02e9cc0f-533e-4bf2-bd6f-97651b73d2f9"
+              }
+            }')
+          echo "$response"
+          # GraphQL errors come back as HTTP 200, so inspect the body explicitly.
+          if echo "$response" | grep -q '"errors"'; then
+            echo "::error::Railway production redeploy failed"
+            exit 1
+          fi
+          echo "Railway production redeploy triggered successfully"
