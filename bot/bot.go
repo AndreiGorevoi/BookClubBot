@@ -28,6 +28,8 @@ var errNotEnoughBooks = errors.New("cannot run a poll as there is less than 2 bo
 const (
 	callbackSkipGathering = "g:skip"
 	callbackNoCover       = "g:nocover"
+	callbackConfirmBook   = "g:confirm"
+	callbackRestartBook   = "g:restart"
 )
 
 type Bot struct {
@@ -340,12 +342,16 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 		b.sendWithKeyboard(uid, b.messages.AttachCoverPhoto, b.noCoverKeyboard())
 
 	case models.StepImage:
-		hasPhoto := update.Message.Photo != nil
-		if hasPhoto {
+		if update.Message.Photo != nil {
 			photo := (update.Message.Photo)[len(update.Message.Photo)-1]
 			p.Book.PhotoID = photo.FileID
 		}
-		b.finishGathering(session.ID, p, hasPhoto)
+		b.enterReview(session.ID, p)
+
+	case models.StepReview:
+		// The user typed instead of pressing a review button; nudge them back to
+		// the summary and its buttons.
+		b.sendReview(p)
 
 	case models.StepDone:
 		b.sendMessage(uid, b.messages.VotingAlreadyCompleted)
@@ -366,6 +372,45 @@ func (b *Bot) finishGathering(sessionID primitive.ObjectID, p *models.Participan
 		b.sendMessage(p.SubscriberID, b.messages.ImageMissingBookAdded)
 	}
 	log.Printf("user: %s %s suggested a book.\n", p.FirstName, p.LastName)
+}
+
+// enterReview moves a participant to the review step and shows the summary so
+// they can confirm or restart before the book is submitted. Shared by the image
+// step and the "no cover" button.
+func (b *Bot) enterReview(sessionID primitive.ObjectID, p *models.Participant) {
+	p.Step = models.StepReview
+	b.persistParticipant(sessionID, p)
+	b.sendReview(p)
+}
+
+// sendReview renders the collected book as a text summary with the confirm /
+// restart buttons. It only sends — the caller owns the persisted step — so it
+// can also re-prompt a user who typed instead of pressing a button.
+func (b *Bot) sendReview(p *models.Participant) {
+	cover := b.messages.CoverMissing
+	if p.Book.PhotoID != "" {
+		cover = b.messages.CoverAttached
+	}
+	summary := fmt.Sprintf(
+		b.messages.BookReviewSummary,
+		p.Book.Title,
+		p.Book.Author,
+		p.Book.Description,
+		cover,
+	)
+	b.sendWithKeyboard(p.SubscriberID, summary, b.reviewKeyboard())
+}
+
+// restartGathering discards a participant's collected book and sends them back
+// to the title step, so they re-enter everything. Triggered by the "start over"
+// review button.
+func (b *Bot) restartGathering(sessionID primitive.ObjectID, p *models.Participant) {
+	p.Book = nil
+	p.Step = models.StepBook
+	b.persistParticipant(sessionID, p)
+	// The title prompt carries the "don't participate" button, same as the
+	// original gathering invite.
+	b.sendWithKeyboard(p.SubscriberID, b.messages.PleaseSuggestBookTitle, b.skipKeyboard())
 }
 
 // handleSkip removes a user from the ongoing book gathering.
@@ -451,7 +496,21 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 			return
 		}
 		b.clearPressedKeyboard(cq)
-		b.finishGathering(session.ID, p, false)
+		b.enterReview(session.ID, p)
+	case callbackConfirmBook:
+		if p.Step != models.StepReview {
+			b.answerCallback(cq.ID, "") // stale button; nothing to do
+			return
+		}
+		b.clearPressedKeyboard(cq)
+		b.finishGathering(session.ID, p, p.Book.PhotoID != "")
+	case callbackRestartBook:
+		if p.Step != models.StepReview {
+			b.answerCallback(cq.ID, "") // stale button; nothing to do
+			return
+		}
+		b.clearPressedKeyboard(cq)
+		b.restartGathering(session.ID, p)
 	default:
 		b.answerCallback(cq.ID, "")
 		return
@@ -853,6 +912,18 @@ func (b *Bot) noCoverKeyboard() *tgbotapi.InlineKeyboardMarkup {
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnNoCover, callbackNoCover),
+		),
+	)
+	return &kb
+}
+
+// reviewKeyboard is the inline keyboard shown on the review summary: confirm the
+// submission, or start over from the title step.
+func (b *Bot) reviewKeyboard() *tgbotapi.InlineKeyboardMarkup {
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnConfirmBook, callbackConfirmBook),
+			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnRestartBook, callbackRestartBook),
 		),
 	)
 	return &kb

@@ -43,6 +43,11 @@ type LocalizedMessages struct {
 	GreetingMessage                    string `json:"greeting_message"`
 	BtnSkipGathering                   string `json:"btn_skip_gathering"`
 	BtnNoCover                         string `json:"btn_no_cover"`
+	BookReviewSummary                  string `json:"book_review_summary"`
+	CoverAttached                      string `json:"cover_attached"`
+	CoverMissing                       string `json:"cover_missing"`
+	BtnConfirmBook                     string `json:"btn_confirm_book"`
+	BtnRestartBook                     string `json:"btn_restart_book"`
 }
 
 func LoadMessaged() (*LocalizedMessages, error) {
