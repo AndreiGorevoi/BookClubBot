@@ -17,7 +17,10 @@ One document per Telegram user who has ever subscribed to the bot. The Telegram 
   "lastName": "Haravy",
   "nick": "andreiharavy",
   "archived": false,
-  "joinedAt": "2025-01-04T10:00:00Z"
+  "joinedAt": "2025-01-04T10:00:00Z",
+  "favoriteGenres": "fantasy, sci-fi",
+  "favoriteBook": "Dune",
+  "funFact": "I can juggle"
 }
 ```
 
@@ -29,6 +32,10 @@ One document per Telegram user who has ever subscribed to the bot. The Telegram 
 | `nick` | string | Telegram username (without `@`) |
 | `archived` | bool | `true` = unsubscribed; user can resubscribe, record is kept |
 | `joinedAt` | date | Timestamp of initial subscription |
+| `favoriteGenres` | string | Optional onboarding answer; omitted/empty if skipped |
+| `favoriteBook` | string | Optional onboarding answer; omitted/empty if skipped |
+| `funFact` | string | Optional onboarding answer; omitted/empty if skipped |
+| `onboardingStep` | string | Current onboarding question (`genres` \| `favoriteBook` \| `funFact`); absent/empty once finished or skipped. New subscribers only. |
 
 **Operations:** upsert on save, `$set archived` on subscribe/unsubscribe, full-collection scan for `GetAllSubscribers` (used to build participant lists for a vote round).
 
