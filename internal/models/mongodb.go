@@ -31,6 +31,7 @@ const (
 	StepAuthor      = "author"
 	StepDescription = "description"
 	StepImage       = "image"
+	StepReview      = "review"
 	StepDone        = "done"
 	StepSkipped     = "skipped"
 )

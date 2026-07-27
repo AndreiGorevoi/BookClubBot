@@ -23,8 +23,10 @@ time** (a second `/start_vote` while one is live is rejected).
 1. A subscriber runs `/start_vote`.
 2. The bot DMs every active subscriber and walks each one through the book
    submission conversation, one question at a time:
-   `title → author → description → cover image → done`.
-   (`/skip` opts a participant out.)
+   `title → author → description → cover image → review → done`.
+   At the **review** step the bot shows a summary of everything entered with two
+   inline buttons: confirm (submit the book, → `done`) or start over (discard the
+   book and go back to `title`). (`/skip` opts a participant out.)
 3. The gathering has a **deadline**. When the deadline passes the gathering
    ends **regardless** of who has not finished — partial/absent submissions are
    simply dropped from the poll. The gathering also ends early if everyone has
@@ -234,7 +236,7 @@ submission; the poll is built from participants whose `step` is `done`.
 | `firstName` | string | Snapshot at invite time |
 | `lastName` | string | Snapshot |
 | `nick` | string | Snapshot |
-| `step` | string | `book` \| `author` \| `description` \| `image` \| `done` \| `skipped` |
+| `step` | string | `book` \| `author` \| `description` \| `image` \| `review` \| `done` \| `skipped` |
 | `book` | object \| null | Partial while in progress, complete when `step == done` |
 | `invitedAt` | date | When the bot DMed this participant |
 | `submittedAt` | date \| null | When `step` reached `done` |

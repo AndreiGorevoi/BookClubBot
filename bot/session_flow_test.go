@@ -29,6 +29,8 @@ func TestGatheringKeyboards(t *testing.T) {
 	b := &Bot{messages: &message.LocalizedMessages{
 		BtnSkipGathering: "Skip",
 		BtnNoCover:       "No cover",
+		BtnConfirmBook:   "Suggest",
+		BtnRestartBook:   "Start over",
 	}}
 
 	t.Run("skip keyboard carries the skip callback", func(t *testing.T) {
@@ -45,6 +47,18 @@ func TestGatheringKeyboards(t *testing.T) {
 		assert.Equal(t, "No cover", btn.Text)
 		assert.NotNil(t, btn.CallbackData)
 		assert.Equal(t, callbackNoCover, *btn.CallbackData)
+	})
+
+	t.Run("review keyboard carries the confirm and restart callbacks", func(t *testing.T) {
+		kb := b.reviewKeyboard()
+		confirm := kb.InlineKeyboard[0][0]
+		restart := kb.InlineKeyboard[0][1]
+		assert.Equal(t, "Suggest", confirm.Text)
+		assert.NotNil(t, confirm.CallbackData)
+		assert.Equal(t, callbackConfirmBook, *confirm.CallbackData)
+		assert.Equal(t, "Start over", restart.Text)
+		assert.NotNil(t, restart.CallbackData)
+		assert.Equal(t, callbackRestartBook, *restart.CallbackData)
 	})
 }
 
@@ -81,6 +95,14 @@ func TestAllBooksChosen(t *testing.T) {
 		session := sessionWith(
 			&models.Participant{SubscriberID: 1, Step: models.StepDone},
 			&models.Participant{SubscriberID: 2, Step: models.StepAuthor},
+		)
+		assert.False(t, allBooksChosen(session))
+	})
+
+	t.Run("someone reviewing their submission", func(t *testing.T) {
+		session := sessionWith(
+			&models.Participant{SubscriberID: 1, Step: models.StepDone},
+			&models.Participant{SubscriberID: 2, Step: models.StepReview},
 		)
 		assert.False(t, allBooksChosen(session))
 	})
