@@ -20,7 +20,12 @@ type Subscriber struct {
 	// OnboardingStep is the question the subscriber is currently on. Empty means
 	// not onboarding (finished, skipped, or an existing subscriber that never
 	// went through it).
-	OnboardingStep string `bson:"onboardingStep,omitempty"`
+	//
+	// NOTE: no `omitempty`. SaveSubscriber persists the whole struct via `$set`,
+	// and omitempty would drop an empty value from the update — so clearing the
+	// step (finishing onboarding) would never reach the DB and the subscriber
+	// would be stuck onboarding forever.
+	OnboardingStep string `bson:"onboardingStep"`
 }
 
 // Onboarding steps. An empty OnboardingStep means the subscriber is not
