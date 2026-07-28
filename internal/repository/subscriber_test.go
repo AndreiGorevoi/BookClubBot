@@ -341,6 +341,48 @@ func TestGetSubscriberById(t *testing.T) {
 	})
 }
 
+// Regression: finishing onboarding sets OnboardingStep back to "" and persists
+// via SaveSubscriber (full-doc $set). If the field carried `omitempty`, the
+// empty value would be dropped from the update and the step would never clear,
+// leaving the subscriber stuck onboarding.
+func TestSaveSubscriber_ClearsOnboardingStep(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+	mongoDB, clear := mongo_helpers.CreateTestMongoDB(t)
+	defer cleanSubscriber(clear, mongoDB)
+
+	repo, err := NewSubscriberRepository(mongoDB)
+	assert.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Subscriber mid-onboarding.
+	sub := &models.Subscriber{
+		ID:             789,
+		FirstName:      "New",
+		JoinedAt:       time.Now().UTC().Truncate(time.Millisecond),
+		OnboardingStep: models.OnboardingGenres,
+	}
+	assert.NoError(t, repo.SaveSubscriber(ctx, sub))
+
+	mid, err := repo.GetSubscriberById(ctx, 789)
+	assert.NoError(t, err)
+	assert.Equal(t, models.OnboardingGenres, mid.OnboardingStep)
+	assert.True(t, mid.IsOnboarding())
+
+	// Finish onboarding: store the answer and clear the step.
+	sub.FavoriteGenres = "detective"
+	sub.OnboardingStep = ""
+	assert.NoError(t, repo.SaveSubscriber(ctx, sub))
+
+	done, err := repo.GetSubscriberById(ctx, 789)
+	assert.NoError(t, err)
+	assert.Equal(t, "detective", done.FavoriteGenres)
+	assert.Empty(t, done.OnboardingStep, "onboarding step must be cleared in the DB")
+	assert.False(t, done.IsOnboarding())
+}
+
 // Helper function to insert a subscriber and verify the insert
 func insertSubscriber(repo *SubscriberRepository, t *testing.T, subscriber *models.Subscriber) {
 	insertCtx, insertCancel := context.WithTimeout(context.Background(), 5*time.Second)

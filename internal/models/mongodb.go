@@ -13,6 +13,30 @@ type Subscriber struct {
 	Nick      string    `bson:"nick"`
 	Archived  bool      `bson:"archived"`
 	JoinedAt  time.Time `bson:"joinedAt"`
+
+	// Optional onboarding profile, collected by the post-subscribe question.
+	// Empty means the question was skipped or never asked.
+	FavoriteGenres string `bson:"favoriteGenres,omitempty"`
+	// OnboardingStep is the question the subscriber is currently on. Empty means
+	// not onboarding (finished, skipped, or an existing subscriber that never
+	// went through it).
+	//
+	// NOTE: no `omitempty`. SaveSubscriber persists the whole struct via `$set`,
+	// and omitempty would drop an empty value from the update — so clearing the
+	// step (finishing onboarding) would never reach the DB and the subscriber
+	// would be stuck onboarding forever.
+	OnboardingStep string `bson:"onboardingStep"`
+}
+
+// Onboarding steps. An empty OnboardingStep means the subscriber is not
+// onboarding.
+const (
+	OnboardingGenres = "genres"
+)
+
+// IsOnboarding reports whether the subscriber is mid-way through onboarding.
+func (s *Subscriber) IsOnboarding() bool {
+	return s.OnboardingStep != ""
 }
 
 // Session statuses. The first three are "active" — at most one session may be

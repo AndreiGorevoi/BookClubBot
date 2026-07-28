@@ -30,6 +30,9 @@ const (
 	callbackNoCover       = "g:nocover"
 	callbackConfirmBook   = "g:confirm"
 	callbackRestartBook   = "g:restart"
+
+	// Onboarding button (o: prefix), handled without an active session.
+	callbackOnboardingSkip = "o:skip"
 )
 
 type Bot struct {
@@ -135,7 +138,7 @@ func (b *Bot) Run() {
 			case "/help":
 				b.handleHelp(&update)
 			default:
-				b.handleUserMsg(&update)
+				b.handleUserMsg(&update, s)
 			}
 			continue
 		}
@@ -187,13 +190,18 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 			FirstName: update.Message.From.FirstName,
 			LastName:  update.Message.From.LastName,
 			JoinedAt:  time.Now(),
+			// Begin the optional onboarding question straight away, persisted in the
+			// same insert as the membership so there's a single write.
+			OnboardingStep: models.OnboardingGenres,
 		}
-		err = b.subRepository.SaveSubscriber(context.Background(), &newSub)
-		if err != nil {
+		if err := b.subRepository.SaveSubscriber(context.Background(), &newSub); err != nil {
 			return fmt.Errorf("failed to add a new subscriber: %w", err)
 		}
-		b.sendMessage(uid, b.messages.WelcomeBookClubNextVoting)
 		log.Printf("user %s %s subsribed\n", newSub.FirstName, newSub.LastName)
+		// Membership is complete; the onboarding question is optional and its
+		// "welcome / see you at the next vote" confirmation is deferred to the end
+		// of onboarding so the user isn't greeted twice up front.
+		b.promptOnboarding(&newSub)
 		return nil
 	}
 
@@ -204,8 +212,12 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 		return nil
 	}
 
-	// case3: Reactivating archived subscriber
-	if err := b.subRepository.SetArchiveSubscriber(context.Background(), uid, false); err != nil {
+	// case3: Reactivating archived subscriber. Also clear any onboarding step left
+	// over from an earlier, unfinished sign-up, so the returning member isn't
+	// wrongly treated as mid-onboarding — reactivation never re-runs onboarding.
+	s.Archived = false
+	s.OnboardingStep = ""
+	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
 		return fmt.Errorf("failed to reactivate a subscriber with id %d : %w", uid, err)
 	}
 	b.sendMessage(uid, b.messages.WelcomeBack)
@@ -221,6 +233,64 @@ func (b *Bot) handleUnsubscribe(update *tgbotapi.Update) error {
 	log.Printf("user with user id: %d unsubsribed", uid)
 	b.sendMessage(uid, b.messages.Unsubsribed)
 	return nil
+}
+
+// promptOnboarding sends the optional post-subscribe onboarding question. The
+// OnboardingStep is already persisted by the caller (in the same write as the
+// subscriber), so this only sends the intro + question.
+func (b *Bot) promptOnboarding(s *models.Subscriber) {
+	b.sendMessage(s.ID, b.messages.OnboardingIntro)
+	b.sendWithKeyboard(s.ID, b.messages.OnboardingAskGenres, b.onboardingKeyboard())
+}
+
+// handleOnboardingAnswer records the subscriber's free-text genres answer and
+// finishes onboarding.
+func (b *Bot) handleOnboardingAnswer(s *models.Subscriber, update *tgbotapi.Update) {
+	answer := strings.TrimSpace(update.Message.Text)
+	b.finishOnboarding(s, &answer)
+}
+
+// finishOnboarding stores the answer (when non-nil), clears the onboarding step,
+// persists, and confirms. Shared by the text answer and the skip button (which
+// passes a nil answer).
+func (b *Bot) finishOnboarding(s *models.Subscriber, answer *string) {
+	if answer != nil {
+		s.FavoriteGenres = *answer
+	}
+	s.OnboardingStep = ""
+	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
+		log.Printf("cannot persist onboarding for subscriber %d: %v", s.ID, err)
+	}
+	// Closing greeting combined with the deferred subscribe confirmation into a
+	// single final message.
+	b.sendMessage(s.ID, b.messages.OnboardingDone+"\n\n"+b.messages.WelcomeBookClubNextVoting)
+}
+
+// handleOnboardingCallback handles the onboarding skip button. The subscriber is
+// the caller (the button lives in their DMs); a press after onboarding has
+// finished is answered with a silent toast and ignored.
+func (b *Bot) handleOnboardingCallback(cq *tgbotapi.CallbackQuery) {
+	s, err := b.subRepository.GetSubscriberById(context.Background(), cq.From.ID)
+	if err != nil {
+		log.Printf("cannot get subscriber for onboarding callback: %v", err)
+		b.answerCallback(cq.ID, "")
+		return
+	}
+	if s == nil || !s.IsOnboarding() {
+		b.answerCallback(cq.ID, "") // stale button; nothing to do
+		return
+	}
+
+	switch cq.Data {
+	case callbackOnboardingSkip:
+		b.clearPressedKeyboard(cq)
+		b.finishOnboarding(s, nil)
+	default:
+		b.answerCallback(cq.ID, "")
+		return
+	}
+
+	b.answerCallback(cq.ID, "")
 }
 
 // handleStartVote opens a new book gathering session and DMs every active
@@ -278,9 +348,16 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 	return nil
 }
 
-// handleUserMsg handles any free-text message from a user during book gathering.
-func (b *Bot) handleUserMsg(update *tgbotapi.Update) {
+// handleUserMsg handles any free-text message from a user. A subscriber who is
+// mid-way through the onboarding Q&A has their message treated as an answer;
+// otherwise it's routed into the active book gathering.
+func (b *Bot) handleUserMsg(update *tgbotapi.Update, s *models.Subscriber) {
 	uid := update.Message.From.ID
+
+	if s != nil && s.IsOnboarding() {
+		b.handleOnboardingAnswer(s, update)
+		return
+	}
 
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
@@ -460,6 +537,12 @@ func (b *Bot) declineGathering(sessionID primitive.ObjectID, p *models.Participa
 // ignored. Exactly one answer is sent per press to stop the button spinner.
 func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 	uid := cq.From.ID
+
+	// Onboarding buttons live on subscriber DMs and don't require a session.
+	if strings.HasPrefix(cq.Data, "o:") {
+		b.handleOnboardingCallback(cq)
+		return
+	}
 
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
@@ -924,6 +1007,17 @@ func (b *Bot) reviewKeyboard() *tgbotapi.InlineKeyboardMarkup {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnConfirmBook, callbackConfirmBook),
 			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnRestartBook, callbackRestartBook),
+		),
+	)
+	return &kb
+}
+
+// onboardingKeyboard is the inline keyboard shown on the onboarding question: a
+// single button that skips it.
+func (b *Bot) onboardingKeyboard() *tgbotapi.InlineKeyboardMarkup {
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnOnboardingSkip, callbackOnboardingSkip),
 		),
 	)
 	return &kb
