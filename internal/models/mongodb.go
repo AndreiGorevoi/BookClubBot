@@ -14,27 +14,22 @@ type Subscriber struct {
 	Archived  bool      `bson:"archived"`
 	JoinedAt  time.Time `bson:"joinedAt"`
 
-	// Optional onboarding profile, collected by the post-subscribe Q&A. Empty
-	// fields mean the question was skipped or never asked.
+	// Optional onboarding profile, collected by the post-subscribe question.
+	// Empty means the question was skipped or never asked.
 	FavoriteGenres string `bson:"favoriteGenres,omitempty"`
-	FavoriteBook   string `bson:"favoriteBook,omitempty"`
-	FunFact        string `bson:"funFact,omitempty"`
-	// OnboardingStep is the question the subscriber is currently on during the
-	// onboarding Q&A. Empty means not onboarding (finished, skipped, or an
-	// existing subscriber that never went through it).
+	// OnboardingStep is the question the subscriber is currently on. Empty means
+	// not onboarding (finished, skipped, or an existing subscriber that never
+	// went through it).
 	OnboardingStep string `bson:"onboardingStep,omitempty"`
 }
 
-// Onboarding Q&A steps, in order. An empty OnboardingStep means the subscriber
-// is not onboarding.
+// Onboarding steps. An empty OnboardingStep means the subscriber is not
+// onboarding.
 const (
-	OnboardingGenres  = "genres"
-	OnboardingFavBook = "favoriteBook"
-	OnboardingFunFact = "funFact"
+	OnboardingGenres = "genres"
 )
 
-// IsOnboarding reports whether the subscriber is mid-way through the onboarding
-// Q&A.
+// IsOnboarding reports whether the subscriber is mid-way through onboarding.
 func (s *Subscriber) IsOnboarding() bool {
 	return s.OnboardingStep != ""
 }

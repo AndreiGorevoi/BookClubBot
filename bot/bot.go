@@ -31,9 +31,8 @@ const (
 	callbackConfirmBook   = "g:confirm"
 	callbackRestartBook   = "g:restart"
 
-	// Onboarding Q&A buttons (o: prefix), handled without an active session.
-	callbackOnboardingSkipQuestion = "o:skipq"
-	callbackOnboardingSkipAll      = "o:skipall"
+	// Onboarding button (o: prefix), handled without an active session.
+	callbackOnboardingSkip = "o:skip"
 )
 
 type Bot struct {
@@ -230,9 +229,9 @@ func (b *Bot) handleUnsubscribe(update *tgbotapi.Update) error {
 	return nil
 }
 
-// startOnboarding kicks off the optional post-subscribe Q&A. It only sets the
-// profile/step fields, so membership is unaffected; a persist failure just skips
-// the questionnaire.
+// startOnboarding kicks off the optional post-subscribe question about the
+// member's favorite genres. It only sets the profile/step fields, so membership
+// is unaffected; a persist failure just skips the question.
 func (b *Bot) startOnboarding(s *models.Subscriber) {
 	s.OnboardingStep = models.OnboardingGenres
 	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
@@ -240,37 +239,32 @@ func (b *Bot) startOnboarding(s *models.Subscriber) {
 		return
 	}
 	b.sendMessage(s.ID, b.messages.OnboardingIntro)
-	b.sendWithKeyboard(s.ID, b.onboardingPrompt(s.OnboardingStep), b.onboardingKeyboard())
+	b.sendWithKeyboard(s.ID, b.messages.OnboardingAskGenres, b.onboardingKeyboard())
 }
 
-// handleOnboardingAnswer records a free-text answer for the subscriber's current
-// onboarding question and moves them to the next one.
+// handleOnboardingAnswer records the subscriber's free-text genres answer and
+// finishes onboarding.
 func (b *Bot) handleOnboardingAnswer(s *models.Subscriber, update *tgbotapi.Update) {
 	answer := strings.TrimSpace(update.Message.Text)
-	b.advanceOnboarding(s, &answer)
+	b.finishOnboarding(s, &answer)
 }
 
-// advanceOnboarding stores the answer (when non-nil) for the current step,
-// advances to the next question, persists, and prompts — or sends the done
-// message when the Q&A is finished. Shared by text answers and the "skip
-// question" button (which passes a nil answer).
-func (b *Bot) advanceOnboarding(s *models.Subscriber, answer *string) {
+// finishOnboarding stores the answer (when non-nil), clears the onboarding step,
+// persists, and confirms. Shared by the text answer and the skip button (which
+// passes a nil answer).
+func (b *Bot) finishOnboarding(s *models.Subscriber, answer *string) {
 	if answer != nil {
-		applyOnboardingAnswer(s, *answer)
+		s.FavoriteGenres = *answer
 	}
-	s.OnboardingStep = nextOnboardingStep(s.OnboardingStep)
+	s.OnboardingStep = ""
 	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
 		log.Printf("cannot persist onboarding for subscriber %d: %v", s.ID, err)
 	}
-	if s.OnboardingStep == "" {
-		b.sendMessage(s.ID, b.messages.OnboardingDone)
-		return
-	}
-	b.sendWithKeyboard(s.ID, b.onboardingPrompt(s.OnboardingStep), b.onboardingKeyboard())
+	b.sendMessage(s.ID, b.messages.OnboardingDone)
 }
 
-// handleOnboardingCallback handles the onboarding skip buttons. The subscriber
-// is the caller (the buttons live in their DMs); a press after onboarding has
+// handleOnboardingCallback handles the onboarding skip button. The subscriber is
+// the caller (the button lives in their DMs); a press after onboarding has
 // finished is answered with a silent toast and ignored.
 func (b *Bot) handleOnboardingCallback(cq *tgbotapi.CallbackQuery) {
 	s, err := b.subRepository.GetSubscriberById(context.Background(), cq.From.ID)
@@ -285,62 +279,15 @@ func (b *Bot) handleOnboardingCallback(cq *tgbotapi.CallbackQuery) {
 	}
 
 	switch cq.Data {
-	case callbackOnboardingSkipQuestion:
+	case callbackOnboardingSkip:
 		b.clearPressedKeyboard(cq)
-		b.advanceOnboarding(s, nil)
-	case callbackOnboardingSkipAll:
-		b.clearPressedKeyboard(cq)
-		s.OnboardingStep = ""
-		if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
-			log.Printf("cannot end onboarding for subscriber %d: %v", s.ID, err)
-		}
-		b.sendMessage(s.ID, b.messages.OnboardingDone)
+		b.finishOnboarding(s, nil)
 	default:
 		b.answerCallback(cq.ID, "")
 		return
 	}
 
 	b.answerCallback(cq.ID, "")
-}
-
-// applyOnboardingAnswer writes an answer into the profile field for the
-// subscriber's current onboarding step.
-func applyOnboardingAnswer(s *models.Subscriber, answer string) {
-	switch s.OnboardingStep {
-	case models.OnboardingGenres:
-		s.FavoriteGenres = answer
-	case models.OnboardingFavBook:
-		s.FavoriteBook = answer
-	case models.OnboardingFunFact:
-		s.FunFact = answer
-	}
-}
-
-// nextOnboardingStep returns the step that follows the given one, or "" when the
-// Q&A is finished.
-func nextOnboardingStep(step string) string {
-	switch step {
-	case models.OnboardingGenres:
-		return models.OnboardingFavBook
-	case models.OnboardingFavBook:
-		return models.OnboardingFunFact
-	default: // OnboardingFunFact or anything unexpected → done
-		return ""
-	}
-}
-
-// onboardingPrompt is the question text for an onboarding step.
-func (b *Bot) onboardingPrompt(step string) string {
-	switch step {
-	case models.OnboardingGenres:
-		return b.messages.OnboardingAskGenres
-	case models.OnboardingFavBook:
-		return b.messages.OnboardingAskFavoriteBook
-	case models.OnboardingFunFact:
-		return b.messages.OnboardingAskFunFact
-	default:
-		return ""
-	}
 }
 
 // handleStartVote opens a new book gathering session and DMs every active
@@ -1062,13 +1009,12 @@ func (b *Bot) reviewKeyboard() *tgbotapi.InlineKeyboardMarkup {
 	return &kb
 }
 
-// onboardingKeyboard is the inline keyboard shown on each onboarding question:
-// skip just this question, or skip the whole introduction.
+// onboardingKeyboard is the inline keyboard shown on the onboarding question: a
+// single button that skips it.
 func (b *Bot) onboardingKeyboard() *tgbotapi.InlineKeyboardMarkup {
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnOnboardingSkipQuestion, callbackOnboardingSkipQuestion),
-			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnOnboardingSkipAll, callbackOnboardingSkipAll),
+			tgbotapi.NewInlineKeyboardButtonData(b.messages.BtnOnboardingSkip, callbackOnboardingSkip),
 		),
 	)
 	return &kb
