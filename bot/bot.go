@@ -244,9 +244,16 @@ func (b *Bot) promptOnboarding(s *models.Subscriber) {
 }
 
 // handleOnboardingAnswer records the subscriber's free-text genres answer and
-// finishes onboarding.
+// finishes onboarding. A message with no usable text (photo/sticker, or
+// whitespace only) is not a valid answer: re-ask the question instead of
+// finishing with empty genres, so the user can type an answer or use the skip
+// button.
 func (b *Bot) handleOnboardingAnswer(s *models.Subscriber, update *tgbotapi.Update) {
 	answer := strings.TrimSpace(update.Message.Text)
+	if answer == "" {
+		b.sendWithKeyboard(s.ID, b.messages.OnboardingAskGenres, b.onboardingKeyboard())
+		return
+	}
 	b.finishOnboarding(s, &answer)
 }
 
@@ -259,7 +266,12 @@ func (b *Bot) finishOnboarding(s *models.Subscriber, answer *string) {
 	}
 	s.OnboardingStep = ""
 	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
+		// Don't acknowledge completion if the step wasn't actually cleared:
+		// otherwise the subscriber stays onboarding in the DB and every later
+		// message would re-run this and re-greet them. They retry on their next
+		// message once the write recovers.
 		log.Printf("cannot persist onboarding for subscriber %d: %v", s.ID, err)
+		return
 	}
 	// Closing greeting combined with the deferred subscribe confirmation into a
 	// single final message.
