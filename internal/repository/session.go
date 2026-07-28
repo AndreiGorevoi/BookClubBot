@@ -241,7 +241,11 @@ func (s *SessionRepository) SetVotingClosed(ctx context.Context, id primitive.Ob
 // (limit <= 0 means no limit).
 func (s *SessionRepository) ListPastSessions(ctx context.Context, limit int64) ([]*models.BookClubSession, error) {
 	collection := s.db.Collection(sessions_collection)
-	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
+	// Secondary sort on _id keeps the order deterministic when createdAt ties:
+	// MongoDB stores dates at millisecond resolution, so sessions created within
+	// the same millisecond share a createdAt. ObjectIDs increase monotonically
+	// with creation time, so _id desc resolves such ties newest-first.
+	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}, {Key: "_id", Value: -1}})
 	if limit > 0 {
 		opts.SetLimit(limit)
 	}
