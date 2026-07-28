@@ -195,10 +195,11 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 		if err != nil {
 			return fmt.Errorf("failed to add a new subscriber: %w", err)
 		}
-		b.sendMessage(uid, b.messages.WelcomeBookClubNextVoting)
 		log.Printf("user %s %s subsribed\n", newSub.FirstName, newSub.LastName)
-		// Membership is already complete; the onboarding Q&A is purely optional
-		// enrichment and never blocks or affects it.
+		// Membership is already complete; the onboarding question is purely
+		// optional and never blocks or affects it. The "welcome / see you at the
+		// next vote" confirmation is deferred to the end of onboarding so the user
+		// isn't greeted twice up front.
 		b.startOnboarding(&newSub)
 		return nil
 	}
@@ -236,6 +237,9 @@ func (b *Bot) startOnboarding(s *models.Subscriber) {
 	s.OnboardingStep = models.OnboardingGenres
 	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
 		log.Printf("cannot start onboarding for subscriber %d: %v", s.ID, err)
+		// Onboarding won't run; still confirm the subscription so the user isn't
+		// left without any acknowledgement.
+		b.sendMessage(s.ID, b.messages.WelcomeBookClubNextVoting)
 		return
 	}
 	b.sendMessage(s.ID, b.messages.OnboardingIntro)
@@ -260,7 +264,9 @@ func (b *Bot) finishOnboarding(s *models.Subscriber, answer *string) {
 	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
 		log.Printf("cannot persist onboarding for subscriber %d: %v", s.ID, err)
 	}
-	b.sendMessage(s.ID, b.messages.OnboardingDone)
+	// Closing greeting combined with the deferred subscribe confirmation into a
+	// single final message.
+	b.sendMessage(s.ID, b.messages.OnboardingDone+"\n\n"+b.messages.WelcomeBookClubNextVoting)
 }
 
 // handleOnboardingCallback handles the onboarding skip button. The subscriber is
