@@ -190,17 +190,18 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 			FirstName: update.Message.From.FirstName,
 			LastName:  update.Message.From.LastName,
 			JoinedAt:  time.Now(),
+			// Begin the optional onboarding question straight away, persisted in the
+			// same insert as the membership so there's a single write.
+			OnboardingStep: models.OnboardingGenres,
 		}
-		err = b.subRepository.SaveSubscriber(context.Background(), &newSub)
-		if err != nil {
+		if err := b.subRepository.SaveSubscriber(context.Background(), &newSub); err != nil {
 			return fmt.Errorf("failed to add a new subscriber: %w", err)
 		}
 		log.Printf("user %s %s subsribed\n", newSub.FirstName, newSub.LastName)
-		// Membership is already complete; the onboarding question is purely
-		// optional and never blocks or affects it. The "welcome / see you at the
-		// next vote" confirmation is deferred to the end of onboarding so the user
-		// isn't greeted twice up front.
-		b.startOnboarding(&newSub)
+		// Membership is complete; the onboarding question is optional and its
+		// "welcome / see you at the next vote" confirmation is deferred to the end
+		// of onboarding so the user isn't greeted twice up front.
+		b.promptOnboarding(&newSub)
 		return nil
 	}
 
@@ -211,8 +212,12 @@ func (b *Bot) handleSubsribe(update *tgbotapi.Update) error {
 		return nil
 	}
 
-	// case3: Reactivating archived subscriber
-	if err := b.subRepository.SetArchiveSubscriber(context.Background(), uid, false); err != nil {
+	// case3: Reactivating archived subscriber. Also clear any onboarding step left
+	// over from an earlier, unfinished sign-up, so the returning member isn't
+	// wrongly treated as mid-onboarding — reactivation never re-runs onboarding.
+	s.Archived = false
+	s.OnboardingStep = ""
+	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
 		return fmt.Errorf("failed to reactivate a subscriber with id %d : %w", uid, err)
 	}
 	b.sendMessage(uid, b.messages.WelcomeBack)
@@ -230,18 +235,10 @@ func (b *Bot) handleUnsubscribe(update *tgbotapi.Update) error {
 	return nil
 }
 
-// startOnboarding kicks off the optional post-subscribe question about the
-// member's favorite genres. It only sets the profile/step fields, so membership
-// is unaffected; a persist failure just skips the question.
-func (b *Bot) startOnboarding(s *models.Subscriber) {
-	s.OnboardingStep = models.OnboardingGenres
-	if err := b.subRepository.SaveSubscriber(context.Background(), s); err != nil {
-		log.Printf("cannot start onboarding for subscriber %d: %v", s.ID, err)
-		// Onboarding won't run; still confirm the subscription so the user isn't
-		// left without any acknowledgement.
-		b.sendMessage(s.ID, b.messages.WelcomeBookClubNextVoting)
-		return
-	}
+// promptOnboarding sends the optional post-subscribe onboarding question. The
+// OnboardingStep is already persisted by the caller (in the same write as the
+// subscriber), so this only sends the intro + question.
+func (b *Bot) promptOnboarding(s *models.Subscriber) {
 	b.sendMessage(s.ID, b.messages.OnboardingIntro)
 	b.sendWithKeyboard(s.ID, b.messages.OnboardingAskGenres, b.onboardingKeyboard())
 }
