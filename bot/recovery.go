@@ -59,15 +59,10 @@ func (b *Bot) recoverTick() {
 	}
 }
 
-// recoverGathering sends the due reminder and moves to voting once the deadline
+// recoverGathering sends any due reminder and moves to voting once the deadline
 // passes (or everyone has finished/skipped).
 func (b *Bot) recoverGathering(session *models.BookClubSession, now time.Time) {
-	if session.Gathering.NotifiedAt == nil && !now.Before(session.Gathering.NotifyAt) {
-		b.notifyGatheringDeadline(session)
-		if err := b.sessionRepository.SetGatheringNotified(context.Background(), session.ID, now); err != nil {
-			log.Printf("recovery: cannot mark gathering notified: %v", err)
-		}
-	}
+	b.remindAboutGathering(session, now)
 
 	if allBooksChosen(session) || !now.Before(session.Gathering.Deadline) {
 		b.runTelegramPollFlow()

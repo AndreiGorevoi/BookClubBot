@@ -28,7 +28,7 @@ type sessionRepo interface {
 	StartVoting(ctx context.Context, id primitive.ObjectID, voting *models.Voting) error
 	SetWinners(ctx context.Context, id primitive.ObjectID, winners []models.Winner) error
 	SetStatus(ctx context.Context, id primitive.ObjectID, status string) error
-	SetGatheringNotified(ctx context.Context, id primitive.ObjectID, at time.Time) error
+	SetGatheringRemindersSent(ctx context.Context, id primitive.ObjectID, count int) error
 	SetVotingNotified(ctx context.Context, id primitive.ObjectID, at time.Time) error
 	SetVotingClosed(ctx context.Context, id primitive.ObjectID, at time.Time) error
 }

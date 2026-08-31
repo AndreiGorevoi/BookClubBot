@@ -1,6 +1,6 @@
 {
   "time_to_gather_books": 60,
-  "notify_before_gathering": 30,
+  "gathering_reminder_interval": 20,
   "time_for_telegram_poll": 60,
   "notify_before_poll": 30,
   "debug_mode": true,

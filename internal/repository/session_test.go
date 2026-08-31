@@ -206,7 +206,7 @@ func TestStartVotingAndSetWinners(t *testing.T) {
 	assert.Equal(t, "The Pragmatic Programmer", stored.Winners[0].Title)
 }
 
-func TestSetGatheringAndVotingNotified(t *testing.T) {
+func TestSetGatheringRemindersSentAndVotingNotified(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
 	}
@@ -221,18 +221,24 @@ func TestSetGatheringAndVotingNotified(t *testing.T) {
 	require.NoError(t, repo.StartVoting(ctx, session.ID, newVoting()))
 
 	at := time.Now().UTC().Truncate(time.Millisecond)
-	require.NoError(t, repo.SetGatheringNotified(ctx, session.ID, at))
+	require.NoError(t, repo.SetGatheringRemindersSent(ctx, session.ID, 2))
 	require.NoError(t, repo.SetVotingNotified(ctx, session.ID, at))
 	require.NoError(t, repo.SetVotingClosed(ctx, session.ID, at))
 
 	stored, err := repo.GetSessionById(ctx, session.ID)
 	require.NoError(t, err)
-	require.NotNil(t, stored.Gathering.NotifiedAt)
 	require.NotNil(t, stored.Voting.NotifiedAt)
 	require.NotNil(t, stored.Voting.ClosedAt)
-	assert.Equal(t, at, stored.Gathering.NotifiedAt.UTC())
+	assert.Equal(t, 2, stored.Gathering.RemindersSent)
 	assert.Equal(t, at, stored.Voting.NotifiedAt.UTC())
 	assert.Equal(t, at, stored.Voting.ClosedAt.UTC())
+
+	// The counter is overwritten, not accumulated: it is the number of schedule
+	// points handled so far, which the caller computes from the deadline.
+	require.NoError(t, repo.SetGatheringRemindersSent(ctx, session.ID, 3))
+	stored, err = repo.GetSessionById(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 3, stored.Gathering.RemindersSent)
 }
 
 func TestListPastSessions(t *testing.T) {
@@ -298,7 +304,6 @@ func newGatheringSession(subscriberID int64) *models.BookClubSession {
 		CreatedBy: subscriberID,
 		Gathering: models.Gathering{
 			Deadline: now.Add(48 * time.Hour),
-			NotifyAt: now.Add(46 * time.Hour),
 			Participants: []*models.Participant{
 				{
 					SubscriberID: subscriberID,

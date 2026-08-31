@@ -12,16 +12,23 @@ import (
 const folder = "./config"
 
 type AppConfig struct {
-	GroupId               int64
-	TimeToGatherBooks     int `json:"time_to_gather_books"`    // seconds
-	NotifyBeforeGathering int `json:"notify_before_gathering"` // seconds
-	TimeForTelegramPoll   int `json:"time_for_telegram_poll"`  // seconds
-	NotifyBeforePoll      int `json:"notify_before_poll"`      //seconds
-	LongPollingTimeout    int `json:"long_polling_timeout"`    // seconds
-	TKey                  string
-	MongoURI              string `json:"mongo_uri"`
-	DBName                string `json:"db_name"`
-	DebugMode             bool   `json:"debug_mode"`
+	GroupId             int64
+	TimeToGatherBooks   int `json:"time_to_gather_books"`   // seconds
+	TimeForTelegramPoll int `json:"time_for_telegram_poll"` // seconds
+	NotifyBeforePoll    int `json:"notify_before_poll"`     //seconds
+	LongPollingTimeout  int `json:"long_polling_timeout"`   // seconds
+
+	// GatheringReminderInterval is the spacing of the gathering reminders, which
+	// are anchored backwards from the gathering deadline: one fires at
+	// deadline-k*interval for every k >= 1 that still falls inside the gathering
+	// window. The k == 1 reminder is the last call and is the only one that also
+	// DMs the members who have not submitted. 0 disables gathering reminders
+	// entirely. See bot/reminders.go.
+	GatheringReminderInterval int `json:"gathering_reminder_interval"` // seconds
+	TKey                      string
+	MongoURI                  string `json:"mongo_uri"`
+	DBName                    string `json:"db_name"`
+	DebugMode                 bool   `json:"debug_mode"`
 }
 
 func LoadConfig() (*AppConfig, error) {

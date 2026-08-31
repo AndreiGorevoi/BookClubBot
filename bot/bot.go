@@ -337,7 +337,6 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 		CreatedBy: update.Message.From.ID,
 		Gathering: models.Gathering{
 			Deadline:     now.Add(time.Duration(b.cfg.TimeToGatherBooks) * time.Second),
-			NotifyAt:     now.Add(time.Duration(b.cfg.TimeToGatherBooks-b.cfg.NotifyBeforeGathering) * time.Second),
 			Participants: participants,
 		},
 	}
@@ -355,8 +354,8 @@ func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
 		b.sendWithKeyboard(p.SubscriberID, b.messages.PleaseSuggestBookTitle, b.skipKeyboard())
 	}
 
-	// The recovery loop drives the gathering reminder and the move to voting
-	// from the session's persisted deadlines.
+	// The recovery loop drives the gathering reminders and the move to voting
+	// from the session's persisted deadline.
 	return nil
 }
 
@@ -925,17 +924,6 @@ func (b *Bot) pollOptionFor(bk *models.Book) string {
 	return fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, bk.Title, b.messages.AuthorLabel, bk.Author)
 }
 
-// notifyGatheringDeadline messages participants who have not finished before
-// the gathering deadline.
-func (b *Bot) notifyGatheringDeadline(session *models.BookClubSession) {
-	txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, (time.Duration(b.cfg.NotifyBeforeGathering) * time.Second).Hours())
-	for _, p := range session.Gathering.Participants {
-		if p.Step != models.StepDone && p.Step != models.StepSkipped {
-			b.sendMessage(p.SubscriberID, txt)
-		}
-	}
-}
-
 // notifyPollDeadline messages the group before the poll deadline.
 func (b *Bot) notifyPollDeadline() {
 	if b.cfg.GroupId == 0 {
@@ -969,12 +957,7 @@ func isBookAlreadyProposed(session *models.BookClubSession, title string) bool {
 
 // allBooksChosen reports whether every participant has finished or skipped.
 func allBooksChosen(session *models.BookClubSession) bool {
-	for _, p := range session.Gathering.Participants {
-		if p.Step != models.StepDone && p.Step != models.StepSkipped {
-			return false
-		}
-	}
-	return true
+	return len(pendingParticipants(session)) == 0
 }
 
 // persistParticipant writes a participant's updated state, logging on failure.
