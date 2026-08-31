@@ -4,7 +4,9 @@ import (
 	"BookClubBot/config"
 	"BookClubBot/internal/models"
 	"BookClubBot/message"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/stretchr/testify/assert"
@@ -175,5 +177,48 @@ func TestWinnersFromPoll(t *testing.T) {
 		}}
 		winners := b.winnersFromPoll(session, poll)
 		assert.Empty(t, winners)
+	})
+}
+
+func TestPollOptionForTruncatesToTelegramLimit(t *testing.T) {
+	b := testBot()
+
+	t.Run("short option is left untouched", func(t *testing.T) {
+		opt := b.pollOptionFor(&models.Book{Title: "Dune", Author: "Herbert"})
+		assert.Equal(t, "Book: Dune. Author: Herbert\n", opt)
+	})
+
+	t.Run("long option is capped and ends with an ellipsis", func(t *testing.T) {
+		long := &models.Book{
+			Title:  strings.Repeat("Очень длинное название ", 10),
+			Author: strings.Repeat("Автор ", 10),
+		}
+		opt := b.pollOptionFor(long)
+		assert.LessOrEqual(t, utf8.RuneCountInString(opt), pollOptionMaxLen)
+		assert.True(t, strings.HasSuffix(opt, "…"), "expected an ellipsis, got %q", opt)
+	})
+
+	t.Run("truncated option still matches its book in winnersFromPoll", func(t *testing.T) {
+		long := &models.Book{
+			Title:  strings.Repeat("A very long title ", 10),
+			Author: strings.Repeat("An author ", 10),
+		}
+		short := &models.Book{Title: "Dune", Author: "Herbert"}
+		session := sessionWith(
+			&models.Participant{SubscriberID: 1, Step: models.StepDone, Book: long},
+			&models.Participant{SubscriberID: 2, Step: models.StepDone, Book: short},
+		)
+
+		// Telegram trims trailing whitespace from option texts it echoes back.
+		poll := &tgbotapi.Poll{Options: []tgbotapi.PollOption{
+			{Text: strings.TrimSpace(b.pollOptionFor(long)), VoterCount: 3},
+			{Text: strings.TrimSpace(b.pollOptionFor(short)), VoterCount: 1},
+		}}
+		for _, o := range poll.Options {
+			assert.LessOrEqual(t, utf8.RuneCountInString(o.Text), pollOptionMaxLen)
+		}
+
+		winners := b.winnersFromPoll(session, poll)
+		assert.Equal(t, []models.Winner{{SubscriberID: 1, Title: long.Title, Author: long.Author}}, winners)
 	})
 }
