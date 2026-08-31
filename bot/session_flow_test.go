@@ -194,8 +194,23 @@ func TestPollOptionForTruncatesToTelegramLimit(t *testing.T) {
 			Author: strings.Repeat("Автор ", 10),
 		}
 		opt := b.pollOptionFor(long)
-		assert.LessOrEqual(t, utf8.RuneCountInString(opt), pollOptionMaxLen)
+		assert.LessOrEqual(t, utf16Len(opt), pollOptionMaxLen)
 		assert.True(t, strings.HasSuffix(opt, "…"), "expected an ellipsis, got %q", opt)
+	})
+
+	t.Run("cap counts UTF-16 units, as Telegram does", func(t *testing.T) {
+		// Every emoji is a surrogate pair: 2 UTF-16 units but 1 rune, so a title
+		// well under 100 runes can still exceed Telegram's limit.
+		emoji := &models.Book{
+			Title:  strings.Repeat("📚", 60),
+			Author: "Herbert",
+		}
+		opt := b.pollOptionFor(emoji)
+		assert.Less(t, utf8.RuneCountInString(opt), pollOptionMaxLen, "test setup: the option must be short in runes")
+		assert.LessOrEqual(t, utf16Len(opt), pollOptionMaxLen)
+		assert.True(t, strings.HasSuffix(opt, "…"), "expected an ellipsis, got %q", opt)
+		// The cut must not split a surrogate pair into a broken rune.
+		assert.True(t, utf8.ValidString(opt))
 	})
 
 	t.Run("truncated option still matches its book in winnersFromPoll", func(t *testing.T) {
@@ -215,7 +230,7 @@ func TestPollOptionForTruncatesToTelegramLimit(t *testing.T) {
 			{Text: strings.TrimSpace(b.pollOptionFor(short)), VoterCount: 1},
 		}}
 		for _, o := range poll.Options {
-			assert.LessOrEqual(t, utf8.RuneCountInString(o.Text), pollOptionMaxLen)
+			assert.LessOrEqual(t, utf16Len(o.Text), pollOptionMaxLen)
 		}
 
 		winners := b.winnersFromPoll(session, poll)

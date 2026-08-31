@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -921,21 +920,22 @@ func (b *Bot) winnersFromPoll(session *models.BookClubSession, poll *tgbotapi.Po
 
 // pollOptionMaxLen is Telegram's hard limit on the length of a single poll
 // option. A longer option makes the whole poll fail to send, which cancels the
-// round, so pollOptionFor truncates instead of letting that happen.
+// round, so pollOptionFor truncates instead of letting that happen. Telegram
+// measures it in UTF-16 code units, so the cap is enforced with utf16Len.
 const pollOptionMaxLen = 100
 
 // pollOptionFor renders the poll option text for a book, capped at
-// pollOptionMaxLen runes. The same rendering is used to build the poll and to
-// match winners back to books, so they must stay in sync — the truncation lives
-// here so the built option and the matched option are identical.
+// pollOptionMaxLen. The same rendering is used to build the poll and to match
+// winners back to books, so they must stay in sync — the truncation lives here
+// so the built option and the matched option are identical.
 func (b *Bot) pollOptionFor(bk *models.Book) string {
 	opt := fmt.Sprintf("%s: %s. %s: %s\n", b.messages.BookLabel, bk.Title, b.messages.AuthorLabel, bk.Author)
-	if utf8.RuneCountInString(opt) <= pollOptionMaxLen {
+	if utf16Len(opt) <= pollOptionMaxLen {
 		return opt
 	}
-	// Leave one rune of headroom for the ellipsis, and drop trailing whitespace
-	// so the cut does not read as "word …".
-	return strings.TrimRight(truncateString(opt, pollOptionMaxLen-1), " \t\n") + "\u2026"
+	// The ellipsis is one UTF-16 unit, so leave one unit of headroom for it, and
+	// drop trailing whitespace so the cut does not read as "word …".
+	return strings.TrimRight(truncateUTF16(opt, pollOptionMaxLen-1), " \t\n") + "\u2026"
 }
 
 // notifyGatheringDeadline messages participants who have not finished before

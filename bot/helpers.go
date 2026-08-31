@@ -61,6 +61,36 @@ func truncateString(input string, limit int) string {
 	return string(runes[:limit]) // Take only the first 'limit' runes
 }
 
+// utf16Len reports the length of s the way Telegram measures text: in UTF-16
+// code units, so a character outside the BMP (an emoji, say) counts as two.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n++
+		if r > 0xFFFF {
+			n++
+		}
+	}
+	return n
+}
+
+// truncateUTF16 cuts s down to at most limit UTF-16 code units. It never splits
+// a character: one that would straddle the limit is dropped whole.
+func truncateUTF16(s string, limit int) string {
+	n := 0
+	for i, r := range s {
+		w := 1
+		if r > 0xFFFF {
+			w = 2
+		}
+		if n+w > limit {
+			return s[:i]
+		}
+		n += w
+	}
+	return s
+}
+
 func shuffleSlice[T any](s []T) []T {
 	copyS := make([]T, len(s))
 	copy(copyS, s)
