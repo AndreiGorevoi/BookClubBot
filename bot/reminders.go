@@ -124,42 +124,27 @@ func planGatheringReminder(session *models.BookClubSession, interval time.Durati
 	}
 }
 
-// dueReminderCount counts the schedule points at deadline-k*interval (k >= 1)
-// that fall strictly after start and are not in the future at now.
+// dueReminderCount returns which reminder is currently owed: 1 for the first
+// scheduled reminder, 2 for the second, and so on, or 0 before any is due. It is
+// compared against Gathering.RemindersSent to tell whether a further one has
+// come due since the last one was sent.
 //
-// The count is monotonic in now, which is what lets it double as the persisted
-// "how many have been handled" marker.
+// The schedule is walked backwards from the deadline. A point at or before the
+// start of gathering is not scheduled at all — an interval that divides the
+// window exactly would otherwise put a reminder at the very moment members were
+// DMed the prompt.
 func dueReminderCount(start, deadline time.Time, interval time.Duration, now time.Time) int {
-	window := deadline.Sub(start)
-	if interval <= 0 || window <= 0 {
+	if interval <= 0 {
 		return 0
 	}
 
-	// A point must fall strictly after the start: k*interval < window. An interval
-	// that divides the window exactly would otherwise schedule a reminder for the
-	// very moment gathering began, when members have just been DMed the prompt.
-	kMax := ceilDiv(window, interval) - 1
-	if kMax < 1 {
-		return 0
-	}
-
-	// A point is due once deadline-k*interval <= now, i.e. k >= remaining/interval.
-	kMin := 1
-	if remaining := deadline.Sub(now); remaining > 0 {
-		if kMin = ceilDiv(remaining, interval); kMin < 1 {
-			kMin = 1
+	count := 0
+	for point := deadline.Add(-interval); point.After(start); point = point.Add(-interval) {
+		if point.Compare(now) <= 0 { // the point has arrived
+			count++
 		}
 	}
-
-	if kMin > kMax {
-		return 0
-	}
-	return kMax - kMin + 1
-}
-
-// ceilDiv divides a by b, rounding up. Both are assumed positive.
-func ceilDiv(a, b time.Duration) int {
-	return int((a + b - 1) / b)
+	return count
 }
 
 // pendingParticipants returns the participants who have neither submitted a book
