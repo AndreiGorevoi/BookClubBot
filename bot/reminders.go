@@ -100,8 +100,8 @@ func planGatheringReminder(session *models.BookClubSession, interval time.Durati
 		return gatheringReminderPlan{}
 	}
 
-	due := dueReminderCount(session.CreatedAt, session.Gathering.Deadline, interval, now)
-	if due <= session.Gathering.RemindersSent {
+	number := currentReminderNumber(session.CreatedAt, session.Gathering.Deadline, interval, now)
+	if number <= session.Gathering.RemindersSent {
 		return gatheringReminderPlan{}
 	}
 
@@ -117,14 +117,14 @@ func planGatheringReminder(session *models.BookClubSession, interval time.Durati
 
 	return gatheringReminderPlan{
 		send:       true,
-		dueCount:   due,
+		dueCount:   number,
 		lastCall:   remaining <= interval,
 		recipients: recipients,
 		remaining:  remaining,
 	}
 }
 
-// dueReminderCount returns which reminder is currently owed: 1 for the first
+// currentReminderNumber returns which reminder is owed at now: 1 for the first
 // scheduled reminder, 2 for the second, and so on, or 0 before any is due. It is
 // compared against Gathering.RemindersSent to tell whether a further one has
 // come due since the last one was sent.
@@ -133,18 +133,19 @@ func planGatheringReminder(session *models.BookClubSession, interval time.Durati
 // start of gathering is not scheduled at all — an interval that divides the
 // window exactly would otherwise put a reminder at the very moment members were
 // DMed the prompt.
-func dueReminderCount(start, deadline time.Time, interval time.Duration, now time.Time) int {
+func currentReminderNumber(start, deadline time.Time, interval time.Duration, now time.Time) int {
 	if interval <= 0 {
 		return 0
 	}
 
-	count := 0
+	number := 0
 	for point := deadline.Add(-interval); point.After(start); point = point.Add(-interval) {
-		if point.Compare(now) <= 0 { // the point has arrived
-			count++
+		if point.After(now) {
+			continue // not reached yet
 		}
+		number++
 	}
-	return count
+	return number
 }
 
 // pendingParticipants returns the participants who have neither submitted a book

@@ -33,7 +33,7 @@ func gatheringAt(start time.Time, window time.Duration, steps ...string) *models
 	}
 }
 
-func TestDueReminderCount(t *testing.T) {
+func TestCurrentReminderNumber(t *testing.T) {
 	start := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 
 	data := map[string]struct {
@@ -85,13 +85,13 @@ func TestDueReminderCount(t *testing.T) {
 	for name, tt := range data {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got := dueReminderCount(start, start.Add(tt.window), tt.interval, start.Add(tt.elapsed))
+			got := currentReminderNumber(start, start.Add(tt.window), tt.interval, start.Add(tt.elapsed))
 			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
 
-func TestDueReminderCountIsMonotonic(t *testing.T) {
+func TestCurrentReminderNumberIsMonotonic(t *testing.T) {
 	start := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	deadline := start.Add(24 * time.Hour)
 	interval := 5 * time.Hour
@@ -100,7 +100,7 @@ func TestDueReminderCountIsMonotonic(t *testing.T) {
 	// it must never decrease as time moves forward.
 	prev := 0
 	for elapsed := time.Duration(0); elapsed <= 30*time.Hour; elapsed += 7 * time.Minute {
-		got := dueReminderCount(start, deadline, interval, start.Add(elapsed))
+		got := currentReminderNumber(start, deadline, interval, start.Add(elapsed))
 		assert.GreaterOrEqual(t, got, prev, "count went backwards at elapsed=%s", elapsed)
 		prev = got
 	}
