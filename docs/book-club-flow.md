@@ -46,6 +46,19 @@ time** (a second `/start_vote` while one is live is rejected).
    Markdown used elsewhere) because it embeds member-supplied names, and a
    Telegram username may legitimately contain `_`.
 
+5. **Quiet hours** (`quiet_hours_start` / `quiet_hours_end` / `timezone`,
+   default 23:00–08:00 Europe/Warsaw) suppress reminders overnight. A reminder
+   that comes due inside the window is **held, not dropped**: `remindersSent` is
+   left untouched, so the first tick after the window closes still sees it as
+   owed and sends it then — and a whole night's worth collapses into the single
+   message the backlog rule already produces. Dropping instead would risk
+   silently swallowing the last call, the only reminder that also DMs. An empty
+   `timezone`, or equal bounds, disables quiet hours.
+
+   The runtime image is alpine without the `tzdata` package, so `cmd/main.go`
+   imports `_ "time/tzdata"` to embed the timezone database in the binary;
+   without it `time.LoadLocation` fails in the container.
+
 ### Step 2 — Voting
 
 1. The bot posts the collected books as a native Telegram poll in the group.

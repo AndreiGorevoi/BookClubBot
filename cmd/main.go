@@ -8,6 +8,11 @@ import (
 	"context"
 	"log"
 	"os"
+
+	// The runtime image is alpine without the tzdata package, so the system has
+	// no timezone database and time.LoadLocation would fail for the quiet-hours
+	// timezone. Embedding it in the binary keeps that independent of the image.
+	_ "time/tzdata"
 )
 
 func main() {

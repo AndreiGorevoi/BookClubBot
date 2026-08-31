@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -25,10 +26,22 @@ type AppConfig struct {
 	// DMs the members who have not submitted. 0 disables gathering reminders
 	// entirely. See bot/reminders.go.
 	GatheringReminderInterval int `json:"gathering_reminder_interval"` // seconds
-	TKey                      string
-	MongoURI                  string `json:"mongo_uri"`
-	DBName                    string `json:"db_name"`
-	DebugMode                 bool   `json:"debug_mode"`
+
+	// QuietHoursStart and QuietHoursEnd bound a nightly window, as hours [0,24)
+	// in Timezone, during which reminders are held rather than sent: a reminder
+	// that comes due inside it goes out when the window ends. The window wraps
+	// midnight when start > end. Equal values disable quiet hours.
+	QuietHoursStart int    `json:"quiet_hours_start"`
+	QuietHoursEnd   int    `json:"quiet_hours_end"`
+	Timezone        string `json:"timezone"`
+
+	// Location is Timezone resolved at startup. A nil Location disables quiet
+	// hours, so reminders are never held.
+	Location  *time.Location
+	TKey      string
+	MongoURI  string `json:"mongo_uri"`
+	DBName    string `json:"db_name"`
+	DebugMode bool   `json:"debug_mode"`
 }
 
 func LoadConfig() (*AppConfig, error) {
@@ -50,7 +63,33 @@ func LoadConfig() (*AppConfig, error) {
 		cfg.MongoURI = mongoURL
 	}
 
+	if err := cfg.resolveQuietHours(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// resolveQuietHours validates the quiet-hours window and loads its timezone.
+// It fails loudly rather than falling back to UTC: a silently wrong timezone
+// would silence reminders during the wrong nine hours of the day.
+func (c *AppConfig) resolveQuietHours() error {
+	if c.Timezone == "" {
+		return nil // quiet hours disabled
+	}
+	if !validHour(c.QuietHoursStart) || !validHour(c.QuietHoursEnd) {
+		return fmt.Errorf("quiet hours must be within [0,24), got start=%d end=%d", c.QuietHoursStart, c.QuietHoursEnd)
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return fmt.Errorf("cannot load timezone %q: %w", c.Timezone, err)
+	}
+	c.Location = loc
+	return nil
+}
+
+func validHour(h int) bool {
+	return h >= 0 && h < 24
 }
 
 func determineEnv() string {

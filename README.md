@@ -35,6 +35,9 @@ Telegram Poll Bot is a Go-based bot designed to facilitate book club meetings by
      {
        "time_to_gather_books": 3600,
        "gathering_reminder_interval": 900,
+       "quiet_hours_start": 23,
+       "quiet_hours_end": 8,
+       "timezone": "Europe/Warsaw",
        "time_for_telegram_poll": 1800,
        "notify_before_poll": 300
      }

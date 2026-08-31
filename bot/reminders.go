@@ -23,6 +23,40 @@ import (
 // would put it at an arbitrary offset depending on how the interval divides the
 // window (a 24h window with a 7h interval would leave 3h; with a 5h interval,
 // 4h), which is exactly where predictability matters most.
+//
+// Reminders due during the configured quiet hours are held until the window
+// ends rather than dropped, so a nightly point never silently swallows the last
+// call.
+
+// quietHours is a nightly window during which reminders are held rather than
+// sent. A reminder that comes due inside it is not dropped: the counter is left
+// untouched, so the next tick after the window ends still sees it as owed and
+// sends it then. That matters most for the last call, which is the reminder that
+// also DMs and the one a member can least afford to miss.
+type quietHours struct {
+	start, end int
+	// loc is the timezone the window is expressed in. A nil loc disables quiet
+	// hours entirely.
+	loc *time.Location
+}
+
+// quietHoursFromConfig reads the window off the app config.
+func (b *Bot) quietHoursFromConfig() quietHours {
+	return quietHours{start: b.cfg.QuietHoursStart, end: b.cfg.QuietHoursEnd, loc: b.cfg.Location}
+}
+
+// covers reports whether t falls inside the window. The window wraps midnight
+// when start > end (the usual 23:00-08:00 shape); equal bounds disable it.
+func (q quietHours) covers(t time.Time) bool {
+	if q.loc == nil || q.start == q.end {
+		return false
+	}
+	h := t.In(q.loc).Hour()
+	if q.start < q.end {
+		return h >= q.start && h < q.end
+	}
+	return h >= q.start || h < q.end
+}
 
 // gatheringReminderPlan is what one recovery tick should do about gathering
 // reminders. Keeping the decision separate from the sending makes the schedule
@@ -45,8 +79,16 @@ type gatheringReminderPlan struct {
 
 // planGatheringReminder decides whether the tick at now owes a reminder for
 // session. interval <= 0 disables gathering reminders entirely.
-func planGatheringReminder(session *models.BookClubSession, interval time.Duration, now time.Time) gatheringReminderPlan {
+func planGatheringReminder(session *models.BookClubSession, interval time.Duration, quiet quietHours, now time.Time) gatheringReminderPlan {
 	if interval <= 0 {
+		return gatheringReminderPlan{}
+	}
+
+	// Hold anything due during quiet hours. The counter is deliberately left
+	// alone so the reminder is merely delayed to the end of the window, not lost,
+	// and a whole night's worth collapses into the single message the backlog
+	// rule already produces.
+	if quiet.covers(now) {
 		return gatheringReminderPlan{}
 	}
 
@@ -135,7 +177,7 @@ func pendingParticipants(session *models.BookClubSession) []*models.Participant 
 // remindAboutGathering sends the reminder a tick is owed, if any, and records it.
 func (b *Bot) remindAboutGathering(session *models.BookClubSession, now time.Time) {
 	interval := time.Duration(b.cfg.GatheringReminderInterval) * time.Second
-	plan := planGatheringReminder(session, interval, now)
+	plan := planGatheringReminder(session, interval, b.quietHoursFromConfig(), now)
 	if !plan.send {
 		return
 	}

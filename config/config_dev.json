@@ -1,6 +1,9 @@
 {
   "time_to_gather_books": 60,
   "gathering_reminder_interval": 20,
+  "quiet_hours_start": 23,
+  "quiet_hours_end": 8,
+  "timezone": "",
   "time_for_telegram_poll": 60,
   "notify_before_poll": 30,
   "debug_mode": true,

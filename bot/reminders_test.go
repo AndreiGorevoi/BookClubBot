@@ -148,13 +148,13 @@ func TestPlanGatheringReminder(t *testing.T) {
 
 	t.Run("nothing due yet", func(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook)
-		plan := planGatheringReminder(session, interval, start.Add(time.Hour))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(time.Hour))
 		assert.False(t, plan.send)
 	})
 
 	t.Run("first point due sends a group-only reminder", func(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook, models.StepDone)
-		plan := planGatheringReminder(session, interval, start.Add(6*time.Hour))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(6*time.Hour))
 
 		assert.True(t, plan.send)
 		assert.Equal(t, 1, plan.dueCount)
@@ -167,15 +167,15 @@ func TestPlanGatheringReminder(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook)
 		session.Gathering.RemindersSent = 2
 
-		plan := planGatheringReminder(session, interval, start.Add(12*time.Hour))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(12*time.Hour))
 		assert.False(t, plan.send, "the point at 12h is already accounted for")
 
 		// Still nothing at the very end of that interval...
-		plan = planGatheringReminder(session, interval, start.Add(18*time.Hour-time.Second))
+		plan = planGatheringReminder(session, interval, quietHours{}, start.Add(18*time.Hour-time.Second))
 		assert.False(t, plan.send)
 
 		// ...until the next point comes due.
-		plan = planGatheringReminder(session, interval, start.Add(18*time.Hour))
+		plan = planGatheringReminder(session, interval, quietHours{}, start.Add(18*time.Hour))
 		assert.True(t, plan.send)
 		assert.Equal(t, 3, plan.dueCount)
 	})
@@ -184,7 +184,7 @@ func TestPlanGatheringReminder(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook)
 
 		// The bot was down across the 6h and 12h points and comes back at 12h.
-		plan := planGatheringReminder(session, interval, start.Add(12*time.Hour))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(12*time.Hour))
 
 		assert.True(t, plan.send)
 		assert.Equal(t, 2, plan.dueCount, "both missed points are marked handled at once")
@@ -195,7 +195,7 @@ func TestPlanGatheringReminder(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook)
 		session.Gathering.RemindersSent = 2
 
-		plan := planGatheringReminder(session, interval, start.Add(18*time.Hour))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(18*time.Hour))
 
 		assert.True(t, plan.send)
 		assert.True(t, plan.lastCall, "one interval before the deadline is the last call")
@@ -208,14 +208,14 @@ func TestPlanGatheringReminder(t *testing.T) {
 		// after downtime spanning the whole window would otherwise do.
 		session := gatheringAt(start, window, models.StepBook)
 
-		assert.False(t, planGatheringReminder(session, interval, start.Add(window)).send)
-		assert.False(t, planGatheringReminder(session, interval, start.Add(window+72*time.Hour)).send)
+		assert.False(t, planGatheringReminder(session, interval, quietHours{}, start.Add(window)).send)
+		assert.False(t, planGatheringReminder(session, interval, quietHours{}, start.Add(window+72*time.Hour)).send)
 	})
 
 	t.Run("last call still fires just before the deadline", func(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook)
 
-		plan := planGatheringReminder(session, interval, start.Add(window-time.Second))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(window-time.Second))
 
 		assert.True(t, plan.send)
 		assert.True(t, plan.lastCall)
@@ -224,13 +224,13 @@ func TestPlanGatheringReminder(t *testing.T) {
 
 	t.Run("nobody to nudge", func(t *testing.T) {
 		session := gatheringAt(start, window, models.StepDone, models.StepSkipped)
-		plan := planGatheringReminder(session, interval, start.Add(18*time.Hour))
+		plan := planGatheringReminder(session, interval, quietHours{}, start.Add(18*time.Hour))
 		assert.False(t, plan.send)
 	})
 
 	t.Run("zero interval disables reminders entirely", func(t *testing.T) {
 		session := gatheringAt(start, window, models.StepBook)
-		plan := planGatheringReminder(session, 0, start.Add(window))
+		plan := planGatheringReminder(session, 0, quietHours{}, start.Add(window))
 		assert.False(t, plan.send, "not even the last call fires when disabled")
 	})
 }
@@ -243,16 +243,16 @@ func TestPlanGatheringReminderProdShape(t *testing.T) {
 	session := gatheringAt(start, 24*time.Hour, models.StepBook)
 	interval := 12 * time.Hour
 
-	assert.False(t, planGatheringReminder(session, interval, start.Add(11*time.Hour)).send)
+	assert.False(t, planGatheringReminder(session, interval, quietHours{}, start.Add(11*time.Hour)).send)
 
-	plan := planGatheringReminder(session, interval, start.Add(12*time.Hour))
+	plan := planGatheringReminder(session, interval, quietHours{}, start.Add(12*time.Hour))
 	assert.True(t, plan.send)
 	assert.Equal(t, 1, plan.dueCount)
 	assert.True(t, plan.lastCall)
 
 	// And it does not repeat for the rest of the window.
 	session.Gathering.RemindersSent = plan.dueCount
-	assert.False(t, planGatheringReminder(session, interval, start.Add(23*time.Hour)).send)
+	assert.False(t, planGatheringReminder(session, interval, quietHours{}, start.Add(23*time.Hour)).send)
 }
 
 func TestMention(t *testing.T) {
@@ -342,4 +342,93 @@ func TestRemindAboutGatheringPersistsCounter(t *testing.T) {
 
 		assert.Zero(t, fake.gatherNotify)
 	})
+}
+
+func TestQuietHoursCovers(t *testing.T) {
+	// A fixed offset stands in for a real zone: covers() only looks at the local
+	// hour, so this exercises the same logic without depending on the host's
+	// timezone database.
+	warsaw := time.FixedZone("CEST", 2*60*60)
+	night := quietHours{start: 23, end: 8, loc: warsaw}
+
+	data := map[string]struct {
+		hours   quietHours
+		utcHour int
+		covered bool
+	}{
+		// 23:00-08:00 local, i.e. 21:00-06:00 UTC at +2.
+		`just before the window`: {night, 20, false},
+		`window opens`:           {night, 21, true},
+		`around midnight`:        {night, 23, true},
+		`after midnight`:         {night, 2, true},
+		`last quiet hour`:        {night, 5, true},
+		`window closes`:          {night, 6, false},
+		`midday`:                 {night, 10, false},
+
+		// A window that does not wrap midnight.
+		`daytime window, inside`:  {quietHours{start: 10, end: 14, loc: warsaw}, 9, true},
+		`daytime window, outside`: {quietHours{start: 10, end: 14, loc: warsaw}, 13, false},
+
+		// Disabled forms.
+		`no timezone disables the window`: {quietHours{start: 23, end: 8}, 2, false},
+		`equal bounds disable the window`: {quietHours{start: 8, end: 8, loc: warsaw}, 2, false},
+	}
+
+	for name, tt := range data {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			at := time.Date(2026, 6, 1, tt.utcHour, 30, 0, 0, time.UTC)
+			assert.Equal(t, tt.covered, tt.hours.covers(at))
+		})
+	}
+}
+
+func TestQuietHoursHoldRatherThanDropReminders(t *testing.T) {
+	// Gathering runs 09:00 → 09:00 local with a 6h interval, so points fall at
+	// 15:00, 21:00 and 03:00 local. The 03:00 point is the last call and lands
+	// inside quiet hours.
+	warsaw := time.FixedZone("CEST", 2*60*60)
+	night := quietHours{start: 23, end: 8, loc: warsaw}
+	start := time.Date(2026, 6, 1, 9, 0, 0, 0, warsaw)
+	session := gatheringAt(start, 24*time.Hour, models.StepBook)
+	const interval = 6 * time.Hour
+
+	local := func(day, hour int) time.Time {
+		return time.Date(2026, 6, day, hour, 0, 0, 0, warsaw)
+	}
+
+	// The two daytime points go out normally.
+	plan := planGatheringReminder(session, interval, night, local(1, 15))
+	assert.True(t, plan.send)
+	session.Gathering.RemindersSent = plan.dueCount
+
+	plan = planGatheringReminder(session, interval, night, local(1, 21))
+	assert.True(t, plan.send)
+	session.Gathering.RemindersSent = plan.dueCount
+
+	// The 03:00 point is due but falls in the quiet window, so nothing is sent
+	// and — crucially — the counter is left alone.
+	held := planGatheringReminder(session, interval, night, local(2, 3))
+	assert.False(t, held.send, "a reminder due at 03:00 must not be sent")
+	assert.Equal(t, 2, session.Gathering.RemindersSent, "the held point must not be marked handled")
+
+	// Still held right up to the end of the window...
+	assert.False(t, planGatheringReminder(session, interval, night, local(2, 7)).send)
+
+	// ...and delivered as soon as it closes, still flagged as the last call so it
+	// also DMs. Dropping it would have silenced the only DM of the round.
+	resumed := planGatheringReminder(session, interval, night, local(2, 8))
+	assert.True(t, resumed.send)
+	assert.Equal(t, 3, resumed.dueCount)
+	assert.True(t, resumed.lastCall)
+}
+
+func TestQuietHoursDisabledSendsAtNight(t *testing.T) {
+	warsaw := time.FixedZone("CEST", 2*60*60)
+	start := time.Date(2026, 6, 1, 9, 0, 0, 0, warsaw)
+	session := gatheringAt(start, 24*time.Hour, models.StepBook)
+	session.Gathering.RemindersSent = 2
+
+	at := time.Date(2026, 6, 2, 3, 0, 0, 0, warsaw)
+	assert.True(t, planGatheringReminder(session, 6*time.Hour, quietHours{}, at).send)
 }
