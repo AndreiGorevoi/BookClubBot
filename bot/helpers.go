@@ -70,12 +70,6 @@ func truncateString(input string, limit int) string {
 	return string(runes[:limit]) // Take only the first 'limit' runes
 }
 
-// Telegram's length limits, both counted in UTF-16 code units.
-const (
-	telegramCaptionMaxLen = 1024
-	telegramMessageMaxLen = 4096
-)
-
 // utf16Len reports the length of s the way Telegram measures text: in UTF-16
 // code units, so a character outside the BMP (an emoji, say) counts as two.
 func utf16Len(s string) int {
