@@ -183,6 +183,7 @@ MongoDB database: **`book_club_boot`**. New collection: **`book_club_sessions`**
     "notifiedAt": null,
     "totalParticipants": 5,
     "voterIds": [123456789, 987654321],
+    "optionOwners": [987654321, 123456789],
     "startedAt": "2026-06-03T10:00:00Z",
     "closedAt": null
   },
@@ -260,8 +261,17 @@ submission; the poll is built from participants whose `step` is `done`.
 | `notifiedAt` | date \| null | Set once the reminder has been sent |
 | `totalParticipants` | int32 | Snapshot of eligible voter count at poll start |
 | `voterIds` | array<int64> | Unique voters; powers dedup, count, and early close |
+| `optionOwners` | array<int64> | Subscriber behind each poll option, in ballot order; resolves winners by position |
 | `startedAt` | date | |
 | `closedAt` | date \| null | `null` while the poll is open |
+
+> `optionOwners` is what maps a winning option back to a book. Matching on the
+> rendered option text cannot: options are capped at Telegram's 100-unit limit,
+> so two books that differ only past the cap render identically. The array is
+> written in the same (shuffled, ten-option) order the options were sent, and it
+> must stay in step with them — see `extractPollOptions` and `runTelegramPoll`.
+> A poll started before this field existed has it empty, and `winnersFromPoll`
+> falls back to text matching for those.
 
 > `voterIds` replaces the old `participantsVoted` counter. A bare count cannot
 > survive a restart without risking double-counting, since Telegram does not

@@ -27,6 +27,24 @@ func sessionWith(participants ...*models.Participant) *models.BookClubSession {
 	}
 }
 
+// votedPoll is a closed poll in which n options each drew a vote.
+func votedPoll(n int) *tgbotapi.Poll {
+	poll := &tgbotapi.Poll{}
+	for i := 0; i < n; i++ {
+		poll.Options = append(poll.Options, tgbotapi.PollOption{VoterCount: 1})
+	}
+	return poll
+}
+
+// emptyPoll is a closed poll with n options that nobody voted in.
+func emptyPoll(n int) *tgbotapi.Poll {
+	poll := &tgbotapi.Poll{}
+	for i := 0; i < n; i++ {
+		poll.Options = append(poll.Options, tgbotapi.PollOption{VoterCount: 0})
+	}
+	return poll
+}
+
 // votingOn attaches the poll's option owner list to a session, the way
 // runTelegramPoll persists it when the poll is built.
 func votingOn(session *models.BookClubSession, owners ...int64) *models.BookClubSession {
@@ -311,7 +329,7 @@ func TestWinnerAnnouncement(t *testing.T) {
 	t.Run("a long winner is announced in full, not truncated", func(t *testing.T) {
 		session := sessionWith(&models.Participant{SubscriberID: 1, Step: models.StepDone,
 			Book: &models.Book{Title: longTitle, Author: "Herbert"}})
-		txt := b.winnerAnnouncement(session, []models.Winner{{SubscriberID: 1, Title: longTitle, Author: "Herbert"}})
+		txt := b.winnerAnnouncement(session, votedPoll(1), []models.Winner{{SubscriberID: 1, Title: longTitle, Author: "Herbert"}})
 
 		assert.Contains(t, txt, longTitle)
 		assert.Contains(t, txt, "Author: Herbert")
@@ -320,7 +338,7 @@ func TestWinnerAnnouncement(t *testing.T) {
 
 	t.Run("a tie lists every winner", func(t *testing.T) {
 		session := sessionWith()
-		txt := b.winnerAnnouncement(session, []models.Winner{
+		txt := b.winnerAnnouncement(session, votedPoll(2), []models.Winner{
 			{SubscriberID: 1, Title: "Dune", Author: "Herbert"},
 			{SubscriberID: 2, Title: "Neuromancer", Author: "Gibson"},
 		})
@@ -336,7 +354,7 @@ func TestWinnerAnnouncement(t *testing.T) {
 			&models.Participant{SubscriberID: 2, Step: models.StepDone, Book: &models.Book{Title: "Neuromancer", Author: "Gibson"}},
 			&models.Participant{SubscriberID: 3, Step: models.StepSkipped},
 		)
-		txt := b.winnerAnnouncement(session, nil)
+		txt := b.winnerAnnouncement(session, emptyPoll(2), nil)
 
 		assert.Contains(t, txt, "No clear winner")
 		assert.Contains(t, txt, "Book: Dune. Author: Herbert")
@@ -344,7 +362,57 @@ func TestWinnerAnnouncement(t *testing.T) {
 	})
 
 	t.Run("no winner and nothing gathered reports an error", func(t *testing.T) {
-		txt := b.winnerAnnouncement(sessionWith(), nil)
+		txt := b.winnerAnnouncement(sessionWith(), emptyPoll(0), nil)
 		assert.Equal(t, "Something went wrong", txt)
 	})
+}
+
+func TestWinnerAnnouncementStaysSendable(t *testing.T) {
+	b := testBot()
+	b.messages.NoClearWinnerManualVoting = "No clear winner"
+
+	// Titles are unbounded member text, and a tie can list several of them.
+	huge := strings.Repeat("я", 900)
+	winners := make([]models.Winner, 0, 6)
+	for i := 0; i < 6; i++ {
+		winners = append(winners, models.Winner{SubscriberID: int64(i), Title: huge, Author: "Автор"})
+	}
+
+	txt := b.winnerAnnouncement(sessionWith(), votedPoll(6), winners)
+	assert.LessOrEqual(t, utf16Len(txt), telegramMessageMaxLen)
+}
+
+func TestWinnerAnnouncementNoVotesOffersTheBallot(t *testing.T) {
+	b := testBot()
+	b.messages.NoClearWinnerManualVoting = "No clear winner"
+
+	// Three finished submissions, but only two of them made it onto the ballot.
+	session := votingOn(sessionWith(
+		&models.Participant{SubscriberID: 1, Step: models.StepDone, Book: &models.Book{Title: "Dune", Author: "Herbert"}},
+		&models.Participant{SubscriberID: 2, Step: models.StepDone, Book: &models.Book{Title: "Neuromancer", Author: "Gibson"}},
+		&models.Participant{SubscriberID: 3, Step: models.StepDone, Book: &models.Book{Title: "Solaris", Author: "Lem"}},
+	), 1, 2)
+
+	txt := b.winnerAnnouncement(session, emptyPoll(2), nil)
+
+	assert.Contains(t, txt, "Dune")
+	assert.Contains(t, txt, "Neuromancer")
+	assert.NotContains(t, txt, "Solaris", "offered a book that was never on the ballot")
+}
+
+func TestWinnerAnnouncementVotesButNoMatch(t *testing.T) {
+	b := testBot()
+	b.messages.ErrorDeterminingWinner = "Something went wrong"
+	b.messages.NoClearWinnerManualVoting = "No clear winner"
+
+	// The poll drew votes, but nothing resolved back to a book — a real failure,
+	// which must not be reported as "nobody voted, pick one yourselves".
+	session := votingOn(sessionWith(
+		&models.Participant{SubscriberID: 1, Step: models.StepDone, Book: &models.Book{Title: "Dune", Author: "Herbert"}},
+	), 1)
+
+	txt := b.winnerAnnouncement(session, votedPoll(1), nil)
+
+	assert.Equal(t, "Something went wrong", txt)
+	assert.NotContains(t, txt, "No clear winner")
 }

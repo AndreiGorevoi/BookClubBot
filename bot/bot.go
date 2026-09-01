@@ -661,18 +661,22 @@ func (b *Bot) handlePollAnswer(answer *tgbotapi.PollAnswer) {
 // announceWinner sends the outcome of the poll to the group. It formats from the
 // winners resolved out of the session rather than from the poll's own option
 // text, which pollOptionFor may have truncated to fit Telegram's option limit.
-func (b *Bot) announceWinner(session *models.BookClubSession, winners []models.Winner) {
+func (b *Bot) announceWinner(session *models.BookClubSession, poll *tgbotapi.Poll, winners []models.Winner) {
 	if b.cfg.GroupId == 0 {
 		log.Println("cannot announce winner as GroupId is not innit")
 		return
 	}
 
-	msg := tgbotapi.NewMessage(b.cfg.GroupId, b.winnerAnnouncement(session, winners))
-	b.tgBot.Send(msg)
+	msg := tgbotapi.NewMessage(b.cfg.GroupId, b.winnerAnnouncement(session, poll, winners))
+	if _, err := b.tgBot.Send(msg); err != nil {
+		log.Printf("cannot announce the winner: %v", err)
+	}
 }
 
 // winnerAnnouncement renders the group message for the outcome of the poll.
-func (b *Bot) winnerAnnouncement(session *models.BookClubSession, winners []models.Winner) string {
+// Titles are member-supplied and unbounded, so the result is capped to what
+// Telegram will accept in one message.
+func (b *Bot) winnerAnnouncement(session *models.BookClubSession, poll *tgbotapi.Poll, winners []models.Winner) string {
 	var txt string
 	switch {
 	case len(winners) == 1:
@@ -683,24 +687,45 @@ func (b *Bot) winnerAnnouncement(session *models.BookClubSession, winners []mode
 			labels = append(labels, b.bookLabel(w.Title, w.Author))
 		}
 		txt = fmt.Sprintf("%s: %s\n", b.messages.NoClearWinnerManualVoting, strings.Join(labels, ", "))
+	case len(winningOptionIdx(poll)) > 0:
+		// The poll had votes but nothing resolved back to a book. That is a real
+		// failure, not an empty ballot, and must not be dressed up as one.
+		log.Println("poll had votes but no option resolved to a book")
+		txt = b.messages.ErrorDeterminingWinner
 	default:
-		// No winner means nobody voted. Offer everything that was gathered so the
-		// group can pick by hand, rather than reporting a failure.
-		gathered := b.gatheredBookLabels(session)
-		if len(gathered) == 0 {
+		// Nobody voted. Offer what was actually on the ballot so the group can
+		// pick by hand, rather than reporting a failure.
+		ballot := b.ballotLabels(session)
+		if len(ballot) == 0 {
 			txt = b.messages.ErrorDeterminingWinner
 			break
 		}
-		txt = fmt.Sprintf("%s: %s\n", b.messages.NoClearWinnerManualVoting, strings.Join(gathered, ", "))
+		txt = fmt.Sprintf("%s: %s\n", b.messages.NoClearWinnerManualVoting, strings.Join(ballot, ", "))
 	}
-	return txt
+	return truncateUTF16(txt, telegramMessageMaxLen)
 }
 
-// gatheredBookLabels renders every finished submission in the session.
-func (b *Bot) gatheredBookLabels(session *models.BookClubSession) []string {
-	labels := make([]string, 0, len(session.Gathering.Participants))
-	for _, p := range session.Gathering.Participants {
-		if p.Step == models.StepDone && p.Book != nil {
+// ballotLabels renders the books that were actually offered in the poll, in
+// ballot order. The poll carries at most ten options, so falling back to every
+// finished submission would offer books the group was never shown; only a poll
+// predating OptionOwners has to do that.
+func (b *Bot) ballotLabels(session *models.BookClubSession) []string {
+	finished := finishedParticipants(session)
+	if session.Voting == nil || len(session.Voting.OptionOwners) == 0 {
+		labels := make([]string, 0, len(finished))
+		for _, p := range finished {
+			labels = append(labels, b.bookLabel(p.Book.Title, p.Book.Author))
+		}
+		return labels
+	}
+
+	byID := make(map[int64]*models.Participant, len(finished))
+	for _, p := range finished {
+		byID[p.SubscriberID] = p
+	}
+	labels := make([]string, 0, len(session.Voting.OptionOwners))
+	for _, id := range session.Voting.OptionOwners {
+		if p, ok := byID[id]; ok {
 			labels = append(labels, b.bookLabel(p.Book.Title, p.Book.Author))
 		}
 	}
@@ -896,7 +921,7 @@ func (b *Bot) closeTelegramPoll() {
 	}
 	b.mu.Unlock()
 
-	b.announceWinner(session, winners)
+	b.announceWinner(session, &res, winners)
 }
 
 // pollOption is one rendered poll option paired with the participant whose book
@@ -907,14 +932,26 @@ type pollOption struct {
 	OwnerID int64
 }
 
+// finishedParticipants returns the participants who completed a submission. It
+// is the single definition of "this book is on the ballot": the poll, the winner
+// lookup and the manual-pick fallback all have to agree on it.
+func finishedParticipants(session *models.BookClubSession) []*models.Participant {
+	out := make([]*models.Participant, 0, len(session.Gathering.Participants))
+	for _, p := range session.Gathering.Participants {
+		if p.Step == models.StepDone && p.Book != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // extractPollOptions builds the shuffled poll options from the finished
 // submissions.
 func (b *Bot) extractPollOptions(session *models.BookClubSession) []pollOption {
-	opts := make([]pollOption, 0, len(session.Gathering.Participants))
-	for _, p := range session.Gathering.Participants {
-		if p.Step == models.StepDone && p.Book != nil {
-			opts = append(opts, pollOption{Text: b.pollOptionFor(p.Book), OwnerID: p.SubscriberID})
-		}
+	finished := finishedParticipants(session)
+	opts := make([]pollOption, 0, len(finished))
+	for _, p := range finished {
+		opts = append(opts, pollOption{Text: b.pollOptionFor(p.Book), OwnerID: p.SubscriberID})
 	}
 	return shuffleSlice(opts)
 }
@@ -943,10 +980,8 @@ func (b *Bot) winnersFromPoll(session *models.BookClubSession, poll *tgbotapi.Po
 	}
 
 	finished := make(map[int64]*models.Participant, len(session.Gathering.Participants))
-	for _, p := range session.Gathering.Participants {
-		if p.Step == models.StepDone && p.Book != nil {
-			finished[p.SubscriberID] = p
-		}
+	for _, p := range finishedParticipants(session) {
+		finished[p.SubscriberID] = p
 	}
 
 	winners := make([]models.Winner, 0, len(won))
@@ -976,10 +1011,7 @@ func (b *Bot) winnersByOptionText(session *models.BookClubSession, poll *tgbotap
 		wonText[strings.TrimSpace(poll.Options[i].Text)] = struct{}{}
 	}
 	winners := make([]models.Winner, 0, len(won))
-	for _, p := range session.Gathering.Participants {
-		if p.Step != models.StepDone || p.Book == nil {
-			continue
-		}
+	for _, p := range finishedParticipants(session) {
 		if _, ok := wonText[strings.TrimSpace(b.pollOptionFor(p.Book))]; ok {
 			winners = append(winners, models.Winner{
 				SubscriberID: p.SubscriberID,
