@@ -2,7 +2,6 @@ package bot
 
 import (
 	"reflect"
-	"slices"
 	"sort"
 	"testing"
 
@@ -10,11 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDefineWinners(t *testing.T) {
+func TestWinningOptionIdx(t *testing.T) {
 	data := map[string]struct {
-		input           *tgbotapi.Poll
-		expectedWinners []string
-		expectedLen     int
+		input    *tgbotapi.Poll
+		expected []int
 	}{
 		`one winner`: {
 			input: &tgbotapi.Poll{
@@ -24,8 +22,7 @@ func TestDefineWinners(t *testing.T) {
 					{Text: "Book3", VoterCount: 1},
 				},
 			},
-			expectedWinners: []string{"Book1"},
-			expectedLen:     1,
+			expected: []int{0},
 		},
 		`two winners`: {
 			input: &tgbotapi.Poll{
@@ -35,36 +32,40 @@ func TestDefineWinners(t *testing.T) {
 					{Text: "Book3", VoterCount: 1},
 				},
 			},
-			expectedWinners: []string{"Book1", "Book2"},
-			expectedLen:     2,
+			expected: []int{0, 1},
+		},
+		`identical option texts stay separate positions`: {
+			input: &tgbotapi.Poll{
+				Options: []tgbotapi.PollOption{
+					{Text: "Same", VoterCount: 2},
+					{Text: "Same", VoterCount: 2},
+				},
+			},
+			expected: []int{0, 1},
+		},
+		`nobody voted`: {
+			input: &tgbotapi.Poll{
+				Options: []tgbotapi.PollOption{
+					{Text: "Book1", VoterCount: 0},
+					{Text: "Book2", VoterCount: 0},
+				},
+			},
+			expected: nil,
 		},
 		`zero winners`: {
-			input: &tgbotapi.Poll{
-				Options: []tgbotapi.PollOption{},
-			},
-			expectedWinners: []string{},
-			expectedLen:     0,
+			input:    &tgbotapi.Poll{Options: []tgbotapi.PollOption{}},
+			expected: nil,
 		},
 		`nil imput`: {
-			input:           nil,
-			expectedWinners: []string{},
-			expectedLen:     0,
+			input:    nil,
+			expected: nil,
 		},
 	}
 
 	for name, tt := range data {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got := defineWinners(tt.input)
-			if len(got) != tt.expectedLen {
-				t.Errorf("expected len: %d, got: %d", tt.expectedLen, len(got))
-			}
-			for _, s := range got {
-				if !slices.Contains(tt.expectedWinners, s) {
-					t.Errorf("expected winners: %v doesn't containt %s", tt.expectedWinners, s)
-				}
-			}
-
+			assert.Equal(t, tt.expected, winningOptionIdx(tt.input))
 		})
 	}
 }
