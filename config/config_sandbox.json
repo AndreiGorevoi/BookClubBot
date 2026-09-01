@@ -1,6 +1,6 @@
 {
-  "time_to_gather_books": 60,
-  "gathering_reminder_interval": 20,
+  "time_to_gather_books": 300,
+  "gathering_reminder_interval": 60,
   "quiet_hours_start": 23,
   "quiet_hours_end": 8,
   "timezone": "Europe/Warsaw",
