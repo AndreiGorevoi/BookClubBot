@@ -19,6 +19,7 @@ type fakeSessionRepo struct {
 	votingClosed  int
 	startedVoting int
 	remindersSent int
+	remindersErr  error
 }
 
 func (f *fakeSessionRepo) CreateSession(context.Context, *models.BookClubSession) error {
@@ -44,6 +45,9 @@ func (f *fakeSessionRepo) SetStatus(_ context.Context, _ primitive.ObjectID, sta
 }
 func (f *fakeSessionRepo) SetGatheringRemindersSent(_ context.Context, _ primitive.ObjectID, count int) error {
 	f.gatherNotify++
+	if f.remindersErr != nil {
+		return f.remindersErr
+	}
 	f.remindersSent = count
 	return nil
 }

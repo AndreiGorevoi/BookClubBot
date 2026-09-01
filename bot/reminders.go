@@ -58,6 +58,27 @@ func (q quietHours) covers(t time.Time) bool {
 	return h >= q.start || h < q.end
 }
 
+// endsAfter returns the next moment the window closes at or after t. Only
+// meaningful while covers(t) is true.
+func (q quietHours) endsAfter(t time.Time) time.Time {
+	local := t.In(q.loc)
+	end := time.Date(local.Year(), local.Month(), local.Day(), q.end, 0, 0, 0, q.loc)
+	if !end.After(local) {
+		end = end.AddDate(0, 0, 1)
+	}
+	return end
+}
+
+// holds reports whether a reminder due at now should wait for the window to
+// close. Holding is only safe while there is still a tick left afterwards to
+// deliver it: once the window outlasts the deadline, waiting would drop the
+// reminder rather than delay it — and the reminder at stake is usually the last
+// call, the only one that also DMs. In that case we accept a message at an
+// antisocial hour over no message at all.
+func (q quietHours) holds(now, deadline time.Time) bool {
+	return q.covers(now) && q.endsAfter(now).Before(deadline)
+}
+
 // gatheringReminderPlan is what one recovery tick should do about gathering
 // reminders. Keeping the decision separate from the sending makes the schedule
 // arithmetic testable without a Telegram client.
@@ -87,8 +108,9 @@ func planGatheringReminder(session *models.BookClubSession, interval time.Durati
 	// Hold anything due during quiet hours. The counter is deliberately left
 	// alone so the reminder is merely delayed to the end of the window, not lost,
 	// and a whole night's worth collapses into the single message the backlog
-	// rule already produces.
-	if quiet.covers(now) {
+	// rule already produces. See quietHours.holds for why a window that outlasts
+	// the deadline does not hold at all.
+	if quiet.holds(now, session.Gathering.Deadline) {
 		return gatheringReminderPlan{}
 	}
 
@@ -168,28 +190,49 @@ func (b *Bot) remindAboutGathering(session *models.BookClubSession, now time.Tim
 		return
 	}
 
-	b.sendGatheringReminderToGroup(plan)
+	// The persisted counter is the source of truth, but a failed write would
+	// otherwise let the next tick 15s later send the very same reminder again —
+	// and on the last call that means DMing every pending member a second time.
+	// This in-process marker closes that window; MongoDB still governs across
+	// restarts. Only the recovery goroutine touches it.
+	if b.lastReminder.sessionID == session.ID && b.lastReminder.number >= plan.dueCount {
+		return
+	}
+
+	if err := b.sendGatheringReminderToGroup(plan); err != nil {
+		// Leave the counter alone so the next tick retries. A point is worth
+		// retrying because it stays due until the deadline.
+		log.Printf("recovery: gathering reminder %d not sent, retrying next tick: %v", plan.dueCount, err)
+		return
+	}
+
 	if plan.lastCall {
 		// The last call also goes to DMs. Subscription is a private-chat
 		// relationship — nothing checks that a subscriber is in the group — so a
 		// mention alone is not guaranteed to reach them, and the DM lands in the
-		// very thread where the submission flow lives.
+		// very thread where the submission flow lives. Best-effort per recipient:
+		// one member who blocked the bot must not hold up the others or trigger a
+		// resend to everyone.
 		b.dmGatheringLastCall(plan)
 	}
+
+	b.lastReminder.sessionID, b.lastReminder.number = session.ID, plan.dueCount
 
 	if err := b.sessionRepository.SetGatheringRemindersSent(context.Background(), session.ID, plan.dueCount); err != nil {
 		log.Printf("recovery: cannot mark gathering reminder %d sent: %v", plan.dueCount, err)
 	}
 }
 
-// sendGatheringReminderToGroup posts the reminder with mentions to the group.
-func (b *Bot) sendGatheringReminderToGroup(plan gatheringReminderPlan) {
+// sendGatheringReminderToGroup posts the reminder with mentions to the group. It
+// returns an error only when the send is worth retrying; a missing GroupId is
+// not, since it cannot resolve itself before the deadline.
+func (b *Bot) sendGatheringReminderToGroup(plan gatheringReminderPlan) error {
 	if b.cfg.GroupId == 0 {
 		log.Println("cannot remind about book gathering as GroupId is not innit")
-		return
+		return nil
 	}
 
-	txt := fmt.Sprintf(b.messages.GatheringReminder, plan.remaining.Hours(), mentionList(plan.recipients))
+	txt := fmt.Sprintf(b.messages.GatheringReminder, b.formatRemaining(plan.remaining), mentionList(plan.recipients))
 	msg := tgbotapi.NewMessage(b.cfg.GroupId, txt)
 	// HTML rather than the Markdown used elsewhere in the bot: this message
 	// embeds member-supplied names and nicknames, and HTML escaping is
@@ -197,16 +240,31 @@ func (b *Bot) sendGatheringReminderToGroup(plan gatheringReminderPlan) {
 	// nickname containing '_'.
 	msg.ParseMode = tgbotapi.ModeHTML
 	if _, err := b.tgBot.Send(msg); err != nil {
-		log.Printf("cannot send gathering reminder to group: %v", err)
+		return fmt.Errorf("cannot send gathering reminder to group: %w", err)
 	}
+	return nil
 }
 
 // dmGatheringLastCall DMs the members who have not submitted before the deadline.
 func (b *Bot) dmGatheringLastCall(plan gatheringReminderPlan) {
-	txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, plan.remaining.Hours())
+	txt := fmt.Sprintf(b.messages.BookSubmissionDeadline, b.formatRemaining(plan.remaining))
 	for _, p := range plan.recipients {
 		b.sendMessage(p.SubscriberID, txt)
 	}
+}
+
+// formatRemaining renders how long is left for the message copy. Below an hour
+// it switches to minutes: a reminder held overnight or delivered after downtime
+// can land minutes before the deadline, where whole hours would read "0".
+func (b *Bot) formatRemaining(d time.Duration) string {
+	if d < time.Hour {
+		minutes := int(d / time.Minute)
+		if minutes < 1 {
+			minutes = 1
+		}
+		return fmt.Sprintf(b.messages.TimeLeftMinutes, minutes)
+	}
+	return fmt.Sprintf(b.messages.TimeLeftHours, int(d.Hours()))
 }
 
 // mentionList renders participants as a comma-separated list of Telegram

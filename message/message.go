@@ -33,6 +33,8 @@ type LocalizedMessages struct {
 	AuthorLabel                        string `json:"author_label"`
 	BookSubmissionDeadline             string `json:"book_submission_deadline"`
 	GatheringReminder                  string `json:"gathering_reminder"`
+	TimeLeftHours                      string `json:"time_left_hours"`
+	TimeLeftMinutes                    string `json:"time_left_minutes"`
 	VotingEndsInHours                  string `json:"voting_ends_in_hours"`
 	CannotStartGatheringGroupIdMissing string `json:"cannot_start_gathering_groupId_missing"`
 	BookAlreadyProposed                string `json:"book_already_proposed"`

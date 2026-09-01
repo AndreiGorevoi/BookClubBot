@@ -55,6 +55,14 @@ time** (a second `/start_vote` while one is live is rejected).
    silently swallowing the last call, the only reminder that also DMs. An empty
    `timezone`, or equal bounds, disables quiet hours.
 
+   Holding only applies while the window closes **before the deadline**. When it
+   would outlast the deadline, the reminder is sent inside the quiet window
+   instead, because waiting would drop it rather than delay it: the gathering
+   would end before the window ever closed. With prod's shape (24h window, 6h
+   interval, 23:00–08:00) this is what rounds started between 05:00 and 08:00
+   depend on — their last call falls at 23:00–02:00 with a deadline before the
+   window closes. A message at an antisocial hour beats no last call at all.
+
    The runtime image is alpine without the `tzdata` package, so `cmd/main.go`
    imports `_ "time/tzdata"` to embed the timezone database in the binary;
    without it `time.LoadLocation` fails in the container.

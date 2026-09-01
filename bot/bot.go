@@ -46,6 +46,15 @@ type Bot struct {
 	subRepository      subscriberRepo
 	settingsRepository settingsRepo
 	sessionRepository  sessionRepo
+
+	// lastReminder is the gathering reminder most recently sent in this process,
+	// so a failed counter write cannot make the next tick repeat it. Written and
+	// read only by the recovery goroutine; MongoDB remains authoritative across
+	// restarts. See bot/reminders.go.
+	lastReminder struct {
+		sessionID primitive.ObjectID
+		number    int
+	}
 }
 
 func NewBot(cfg *config.AppConfig, messages *message.LocalizedMessages, subRepository subscriberRepo, settingsRepository settingsRepo, sessionRepository sessionRepo) *Bot {

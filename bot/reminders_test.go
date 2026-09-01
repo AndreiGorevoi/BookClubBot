@@ -4,6 +4,7 @@ import (
 	"BookClubBot/config"
 	"BookClubBot/internal/models"
 	"BookClubBot/message"
+	"errors"
 	"testing"
 	"time"
 
@@ -431,4 +432,122 @@ func TestQuietHoursDisabledSendsAtNight(t *testing.T) {
 
 	at := time.Date(2026, 6, 2, 3, 0, 0, 0, warsaw)
 	assert.True(t, planGatheringReminder(session, 6*time.Hour, quietHours{}, at).send)
+}
+
+func TestQuietHoursNeverSwallowTheLastCall(t *testing.T) {
+	// Regression: holding a reminder is only safe while the window closes before
+	// the deadline. When it does not, waiting drops the reminder instead of
+	// delaying it — and the point at stake is the last call, the only reminder
+	// that also DMs. Round shape is prod's: 24h window, 6h interval.
+	warsaw := time.FixedZone("CEST", 2*60*60)
+	night := quietHours{start: 23, end: 8, loc: warsaw}
+	const window = 24 * time.Hour
+	const interval = 6 * time.Hour
+
+	for startHour := 0; startHour < 24; startHour++ {
+		start := time.Date(2026, 9, 1, startHour, 0, 0, 0, warsaw)
+		session := gatheringAt(start, window, models.StepBook)
+		session.CreatedAt = start
+
+		sends, lastCalls := 0, 0
+		// drive the real 15s recovery tick across the whole round
+		for now := start; now.Before(start.Add(window)); now = now.Add(recoveryTickInterval) {
+			plan := planGatheringReminder(session, interval, night, now)
+			if !plan.send {
+				continue
+			}
+			sends++
+			if plan.lastCall {
+				lastCalls++
+			}
+			session.Gathering.RemindersSent = plan.dueCount
+		}
+
+		assert.Equal(t, 1, lastCalls, "round started at %02d:00 must get exactly one last call", startHour)
+		assert.Positive(t, sends, "round started at %02d:00 got no reminder at all", startHour)
+	}
+}
+
+func TestQuietHoursHolds(t *testing.T) {
+	warsaw := time.FixedZone("CEST", 2*60*60)
+	night := quietHours{start: 23, end: 8, loc: warsaw}
+	at := func(day, hour int) time.Time { return time.Date(2026, 9, day, hour, 0, 0, 0, warsaw) }
+
+	t.Run("holds when the window closes before the deadline", func(t *testing.T) {
+		assert.True(t, night.holds(at(2, 3), at(2, 12)))
+	})
+
+	t.Run("does not hold when the window outlasts the deadline", func(t *testing.T) {
+		// 03:00 with a 07:00 deadline: waiting for 08:00 would mean never sending.
+		assert.False(t, night.holds(at(2, 3), at(2, 7)))
+	})
+
+	t.Run("does not hold outside the window", func(t *testing.T) {
+		assert.False(t, night.holds(at(2, 12), at(3, 12)))
+	})
+
+	t.Run("disabled window never holds", func(t *testing.T) {
+		assert.False(t, quietHours{}.holds(at(2, 3), at(2, 12)))
+	})
+}
+
+func TestQuietHoursEndsAfter(t *testing.T) {
+	warsaw := time.FixedZone("CEST", 2*60*60)
+	night := quietHours{start: 23, end: 8, loc: warsaw}
+
+	// Before midnight the window closes the next morning...
+	got := night.endsAfter(time.Date(2026, 9, 1, 23, 30, 0, 0, warsaw))
+	assert.Equal(t, time.Date(2026, 9, 2, 8, 0, 0, 0, warsaw), got)
+
+	// ...and after midnight, the same morning.
+	got = night.endsAfter(time.Date(2026, 9, 2, 3, 0, 0, 0, warsaw))
+	assert.Equal(t, time.Date(2026, 9, 2, 8, 0, 0, 0, warsaw), got)
+}
+
+func TestFormatRemaining(t *testing.T) {
+	b := &Bot{messages: &message.LocalizedMessages{
+		TimeLeftHours:   "%d ч",
+		TimeLeftMinutes: "%d мин",
+	}}
+
+	data := map[string]struct {
+		in       time.Duration
+		expected string
+	}{
+		`whole hours`:              {6 * time.Hour, "6 ч"},
+		`hours are truncated`:      {90 * time.Minute, "1 ч"},
+		`under an hour is minutes`: {20 * time.Minute, "20 мин"},
+		// Whole hours would render "0" here, which is what a reminder delivered
+		// after quiet hours or downtime used to say.
+		`just under an hour`: {59 * time.Minute, "59 мин"},
+		`seconds round up`:   {30 * time.Second, "1 мин"},
+		`zero rounds up`:     {0, "1 мин"},
+	}
+
+	for name, tt := range data {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, b.formatRemaining(tt.in))
+		})
+	}
+}
+
+func TestRemindAboutGatheringDoesNotRepeatAfterFailedWrite(t *testing.T) {
+	// A failed counter write must not let the next tick send the same reminder
+	// again — on the last call that would mean DMing everyone twice.
+	start := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	session := gatheringAt(start, 24*time.Hour, models.StepBook)
+	fake := &fakeSessionRepo{remindersErr: errors.New("mongo write failed")}
+	b := &Bot{
+		// GroupId 0 keeps the send a no-op, so this exercises the bookkeeping.
+		cfg:               &config.AppConfig{GatheringReminderInterval: int((6 * time.Hour).Seconds())},
+		messages:          &message.LocalizedMessages{GatheringReminder: "%s %s"},
+		sessionRepository: fake,
+	}
+
+	at := start.Add(6 * time.Hour)
+	b.remindAboutGathering(session, at)
+	b.remindAboutGathering(session, at.Add(recoveryTickInterval))
+
+	assert.Equal(t, 1, fake.gatherNotify, "the same reminder must be attempted only once per process")
 }
