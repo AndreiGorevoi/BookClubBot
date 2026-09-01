@@ -23,12 +23,6 @@ func defineWinners(res *tgbotapi.Poll) []string {
 	return m[max]
 }
 
-// Telegram's length limits, both counted in UTF-16 code units.
-const (
-	telegramCaptionMaxLen = 1024
-	telegramMessageMaxLen = 4096
-)
-
 // escapeMarkdown neutralises the legacy-Markdown metacharacters in text the
 // members wrote. Without it a single unpaired '_', '*', '`' or '[' — a footnote
 // marker pasted in from a web page, say — makes Telegram reject the whole send
