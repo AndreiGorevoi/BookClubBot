@@ -26,33 +26,83 @@ func TestBookCaptionEscapesMarkdown(t *testing.T) {
 		p.bookCaption())
 }
 
-func TestTruncateCaption(t *testing.T) {
-	t.Run("a short caption is untouched", func(t *testing.T) {
-		assert.Equal(t, "hello", truncateCaption("hello"))
+func TestDropDanglingEscape(t *testing.T) {
+	assert.Equal(t, "ab", dropDanglingEscape(`ab\`), "an unpaired backslash must go")
+	assert.Equal(t, `ab\\`, dropDanglingEscape(`ab\\`), "an escaped backslash must survive")
+	assert.Equal(t, `ab\\\`[:4], dropDanglingEscape(`ab\\\`), "three backslashes: one is unpaired")
+	assert.Equal(t, "ab", dropDanglingEscape("ab"))
+	assert.Equal(t, "", dropDanglingEscape(""))
+}
+
+func TestElideEscapedNeverEndsOnAnUnpairedEscape(t *testing.T) {
+	// Sweep the cut across escape-sequence boundaries: with a prefix of even and
+	// odd length in turn, some of these limits land between a backslash and the
+	// character it escapes, which is what the parity guard exists for.
+	for _, prefix := range []string{"", "x", "xy"} {
+		escaped := escapeMarkdown(prefix + strings.Repeat("_", 600))
+		for limit := 200; limit < 240; limit++ {
+			out := elideEscaped(escaped, limit)
+
+			assert.LessOrEqual(t, utf16Len(out), limit, "limit %d overshot", limit)
+			trailing := 0
+			for i := len(out) - len("…") - 1; i >= 0 && out[i] == '\\'; i-- {
+				trailing++
+			}
+			assert.Equal(t, 0, trailing%2, "prefix %q limit %d left an unpaired escape: %q", prefix, limit, out)
+		}
+	}
+}
+
+func TestBookCaptionStaysWithinTelegramLimit(t *testing.T) {
+	labels := []string{"*Название*", "*Автор*", "*Описание*"}
+
+	t.Run("a long title cannot cut the template's own markup", func(t *testing.T) {
+		// Nothing bounds a title: StepBook stores the message verbatim. Lengths
+		// around 1000 are the window where a cut of the assembled caption would
+		// land inside the "*Автор*" or "*Описание*" label.
+		for _, n := range []int{978, 982, 986, 999, 1002, 1004, 1500} {
+			p := &participant{book: &book{
+				title:       strings.Repeat("я", n),
+				author:      "Толстой",
+				description: "Описание.",
+			}}
+			caption := p.bookCaption()
+
+			assert.LessOrEqual(t, utf16Len(caption), telegramCaptionMaxLen, "title of %d", n)
+			for _, label := range labels {
+				assert.Contains(t, caption, label, "title of %d cut the %s label", n, label)
+			}
+		}
 	})
 
-	t.Run("an over-long caption is cut to the limit", func(t *testing.T) {
-		out := truncateCaption(strings.Repeat("я", 2000))
-		assert.Equal(t, telegramCaptionMaxLen, utf16Len(out))
+	t.Run("a long description is elided, the rest survives", func(t *testing.T) {
+		p := &participant{book: &book{
+			title:       "Дюна",
+			author:      "Фрэнк Герберт",
+			description: strings.Repeat("очень длинное описание ", 100),
+		}}
+		caption := p.bookCaption()
+
+		assert.LessOrEqual(t, utf16Len(caption), telegramCaptionMaxLen)
+		assert.Contains(t, caption, "Дюна")
+		assert.Contains(t, caption, "Фрэнк Герберт")
+		assert.Contains(t, caption, "…", "a trimmed caption should say so")
 	})
 
 	t.Run("emoji count double, as Telegram counts them", func(t *testing.T) {
-		// 600 emoji is 600 runes but 1200 UTF-16 units: a rune-based cut would
-		// have left this over the limit.
-		out := truncateCaption(strings.Repeat("📚", 600))
-		assert.LessOrEqual(t, utf16Len(out), telegramCaptionMaxLen)
+		p := &participant{book: &book{
+			title:       strings.Repeat("📚", 600),
+			author:      "Автор",
+			description: "Описание.",
+		}}
+
+		assert.LessOrEqual(t, utf16Len(p.bookCaption()), telegramCaptionMaxLen)
 	})
 
-	t.Run("the cut never leaves a dangling escape", func(t *testing.T) {
-		// Escaped text is half backslashes, so the cut lands on one sooner or later.
-		escaped := escapeMarkdown(strings.Repeat("_", 2000))
-		out := truncateCaption(escaped)
+	t.Run("a short caption is left exactly as it was", func(t *testing.T) {
+		p := &participant{book: &book{title: "Дюна", author: "Герберт", description: "Пески."}}
 
-		trailing := 0
-		for i := len(out) - 1; i >= 0 && out[i] == '\\'; i-- {
-			trailing++
-		}
-		assert.Equal(t, 0, trailing%2, "caption ends with an unpaired backslash: %q", out[len(out)-4:])
+		assert.Equal(t, "📚 *Название*: Дюна\n👤 *Автор*: Герберт\n📝 *Описание*: Пески.", p.bookCaption())
 	})
 }
 
@@ -85,6 +135,21 @@ func TestReviewSummaryFitsTelegramLimit(t *testing.T) {
 		assert.Contains(t, out, "Фрэнк Герберт")
 		assert.Contains(t, out, "Обложка: есть")
 		assert.True(t, strings.Contains(out, "…"), "expected the description to be elided")
+	})
+
+	t.Run("a long title does not cost the description or the cover line", func(t *testing.T) {
+		// The title is what overflows here, so the description — 15 characters —
+		// must not be the field that pays for it.
+		p := &models.Participant{Book: &models.Book{
+			Title:       strings.Repeat("я", 4000),
+			Author:      "Герберт",
+			Description: "Пески Арракиса.",
+		}}
+		out := b.reviewSummary(p, "есть")
+
+		assert.LessOrEqual(t, utf16Len(out), telegramMessageMaxLen)
+		assert.Contains(t, out, "Пески Арракиса.", "the short description was sacrificed to a long title")
+		assert.Contains(t, out, "Обложка: есть", "the cover line was cut off the end")
 	})
 
 	t.Run("a pathological title alone still yields a sendable message", func(t *testing.T) {
