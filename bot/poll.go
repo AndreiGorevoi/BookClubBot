@@ -50,9 +50,9 @@ func viewParticipant(p *models.Participant) *participant {
 func (p *participant) bookCaption() string {
 	return fmt.Sprintf(
 		"📚 *Название*: %s\n👤 *Автор*: %s\n📝 *Описание*: %s",
-		p.book.title,
-		p.book.author,
-		p.book.description,
+		escapeMarkdown(p.book.title),
+		escapeMarkdown(p.book.author),
+		escapeMarkdown(p.book.description),
 	)
 }
 

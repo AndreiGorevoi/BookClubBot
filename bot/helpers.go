@@ -2,7 +2,6 @@ package bot
 
 import (
 	"math/rand"
-	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -35,7 +34,7 @@ func splitMedia(participants []*participant, batchSize int) [][]interface{} {
 
 		// Add an image for the book
 		bookImage := participant.bookImage()
-		bookImage.Caption = truncateString(participant.bookCaption(), 1024)
+		bookImage.Caption = truncateCaption(participant.bookCaption())
 		bookImage.ParseMode = "Markdown"
 		currentBatch = append(currentBatch, bookImage)
 		if len(currentBatch) == batchSize {
@@ -50,15 +49,36 @@ func splitMedia(participants []*participant, batchSize int) [][]interface{} {
 	return batches
 }
 
-func truncateString(input string, limit int) string {
-	// Check the rune count in the string
-	if utf8.RuneCountInString(input) <= limit {
-		return input // Return as-is if within the limit
-	}
+// Telegram's length limits, both counted in UTF-16 code units.
+const (
+	telegramCaptionMaxLen = 1024
+	telegramMessageMaxLen = 4096
+)
 
-	// Truncate to the specified limit
-	runes := []rune(input)       // Convert string to a slice of runes (characters)
-	return string(runes[:limit]) // Take only the first 'limit' runes
+// escapeMarkdown neutralises the legacy-Markdown metacharacters in text the
+// members wrote. Without it a single unpaired '_', '*', '`' or '[' — a footnote
+// marker pasted in from a web page, say — makes Telegram reject the whole send
+// with "can't parse entities". Mirrors escapeHTML in reminders.go.
+func escapeMarkdown(s string) string {
+	return tgbotapi.EscapeText(tgbotapi.ModeMarkdown, s)
+}
+
+// truncateCaption cuts an already-escaped caption to Telegram's caption limit.
+// Cutting could leave a trailing lone backslash, which would escape whatever
+// follows and break parsing, so an unpaired one is dropped.
+func truncateCaption(s string) string {
+	if utf16Len(s) <= telegramCaptionMaxLen {
+		return s
+	}
+	out := truncateUTF16(s, telegramCaptionMaxLen)
+	trailing := 0
+	for i := len(out) - 1; i >= 0 && out[i] == '\\'; i-- {
+		trailing++
+	}
+	if trailing%2 == 1 {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 // utf16Len reports the length of s the way Telegram measures text: in UTF-16

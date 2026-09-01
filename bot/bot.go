@@ -488,6 +488,15 @@ func (b *Bot) sendReview(p *models.Participant) {
 	if p.Book.PhotoID != "" {
 		cover = b.messages.CoverAttached
 	}
+	summary := b.reviewSummary(p, cover)
+	b.sendWithKeyboard(p.SubscriberID, summary, b.reviewKeyboard())
+}
+
+// reviewSummary renders the pre-submit summary, bounded to Telegram's message
+// limit. Members paste long blurbs, and an over-long summary fails to send —
+// which would leave them parked on the review step with no buttons, replaying
+// the same failure on every message until they give up or /skip.
+func (b *Bot) reviewSummary(p *models.Participant, cover string) string {
 	summary := fmt.Sprintf(
 		b.messages.BookReviewSummary,
 		p.Book.Title,
@@ -495,7 +504,27 @@ func (b *Bot) sendReview(p *models.Participant) {
 		p.Book.Description,
 		cover,
 	)
-	b.sendWithKeyboard(p.SubscriberID, summary, b.reviewKeyboard())
+	if utf16Len(summary) <= telegramMessageMaxLen {
+		return summary
+	}
+
+	// The description is the only field a member can realistically blow the limit
+	// with, so shrink it and keep the rest of the summary readable.
+	over := utf16Len(summary) - telegramMessageMaxLen
+	keep := utf16Len(p.Book.Description) - over - 1 // -1 for the ellipsis
+	if keep < 0 {
+		keep = 0
+	}
+	summary = fmt.Sprintf(
+		b.messages.BookReviewSummary,
+		p.Book.Title,
+		p.Book.Author,
+		truncateUTF16(p.Book.Description, keep)+"\u2026",
+		cover,
+	)
+	// A title or author long enough to overflow on its own is pathological, but
+	// the message still has to be sendable.
+	return truncateUTF16(summary, telegramMessageMaxLen)
 }
 
 // restartGathering discards a participant's collected book and sends them back
@@ -702,7 +731,7 @@ func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
 		}
 		vp := viewParticipant(p)
 		img := vp.bookImage()
-		img.Caption = truncateString(vp.bookCaption(), 1024)
+		img.Caption = truncateCaption(vp.bookCaption())
 		img.ParseMode = "Markdown"
 		mediaItems = append(mediaItems, img)
 	}
