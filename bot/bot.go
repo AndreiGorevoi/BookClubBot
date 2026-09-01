@@ -488,14 +488,27 @@ func (b *Bot) sendReview(p *models.Participant) {
 	if p.Book.PhotoID != "" {
 		cover = b.messages.CoverAttached
 	}
-	summary := fmt.Sprintf(
-		b.messages.BookReviewSummary,
-		p.Book.Title,
-		p.Book.Author,
-		p.Book.Description,
-		cover,
-	)
+	summary := b.reviewSummary(p, cover)
 	b.sendWithKeyboard(p.SubscriberID, summary, b.reviewKeyboard())
+}
+
+// reviewSummary renders the pre-submit summary, bounded to Telegram's message
+// limit. Members paste long blurbs, and an over-long summary fails to send —
+// which would leave them parked on the review step with no buttons, replaying
+// the same failure on every message until they give up or /skip.
+func (b *Bot) reviewSummary(p *models.Participant, cover string) string {
+	title, author, description := p.Book.Title, p.Book.Author, p.Book.Description
+
+	// Shrink the fields rather than the finished message, so the cover line and
+	// the labels around them survive; the description gives way first, since it
+	// is the field members actually paste walls of text into.
+	overhead := utf16Len(fmt.Sprintf(b.messages.BookReviewSummary, "", "", "", cover))
+	fitFields(telegramMessageMaxLen-overhead, elide, &description, &title, &author)
+
+	summary := fmt.Sprintf(b.messages.BookReviewSummary, title, author, description, cover)
+	// The fields are bounded above, so this only guards against a template that
+	// cannot fit on its own.
+	return truncateUTF16(summary, telegramMessageMaxLen)
 }
 
 // restartGathering discards a participant's collected book and sends them back
@@ -755,7 +768,7 @@ func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
 		}
 		vp := viewParticipant(p)
 		img := vp.bookImage()
-		img.Caption = truncateString(vp.bookCaption(), 1024)
+		img.Caption = vp.bookCaption()
 		img.ParseMode = "Markdown"
 		mediaItems = append(mediaItems, img)
 	}

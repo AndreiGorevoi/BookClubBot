@@ -47,12 +47,29 @@ func viewParticipant(p *models.Participant) *participant {
 	return vp
 }
 
+// bookCaption renders the group card for a book, within Telegram's caption
+// limit. Member text is escaped, and it is the fields that are shortened, never
+// the assembled markup: a cut landing inside the template's own bold markers
+// would leave an unclosed entity and Telegram would reject the whole send.
 func (p *participant) bookCaption() string {
+	title := escapeMarkdown(p.book.title)
+	author := escapeMarkdown(p.book.author)
+	description := escapeMarkdown(p.book.description)
+
+	budget := telegramCaptionMaxLen - utf16Len(bookCaptionText("", "", ""))
+	fitFields(budget, elideEscaped, &description, &title, &author)
+
+	return bookCaptionText(title, author, description)
+}
+
+// bookCaptionText lays out the card. Everything it adds — the labels and their
+// bold markers — is fixed text, so it always parses.
+func bookCaptionText(title, author, description string) string {
 	return fmt.Sprintf(
 		"📚 *Название*: %s\n👤 *Автор*: %s\n📝 *Описание*: %s",
-		p.book.title,
-		p.book.author,
-		p.book.description,
+		title,
+		author,
+		description,
 	)
 }
 
