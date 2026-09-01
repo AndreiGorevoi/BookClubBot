@@ -7,21 +7,30 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func defineWinners(res *tgbotapi.Poll) []string {
+// winningOptionIdx returns the positions of the poll options that tied for the
+// most votes. A poll nobody voted in has no winner, so it returns nothing rather
+// than reporting every option as a winner.
+func winningOptionIdx(res *tgbotapi.Poll) []int {
 	if res == nil {
 		return nil
 	}
-	m := make(map[int][]string)
-	max := -1
-
+	max := 0
 	for _, o := range res.Options {
 		if o.VoterCount > max {
 			max = o.VoterCount
 		}
-		m[o.VoterCount] = append(m[o.VoterCount], o.Text)
+	}
+	if max == 0 {
+		return nil
 	}
 
-	return m[max]
+	idx := make([]int, 0, len(res.Options))
+	for i, o := range res.Options {
+		if o.VoterCount == max {
+			idx = append(idx, i)
+		}
+	}
+	return idx
 }
 
 func splitMedia(participants []*participant, batchSize int) [][]interface{} {

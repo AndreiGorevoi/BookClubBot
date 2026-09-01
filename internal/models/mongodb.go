@@ -105,8 +105,13 @@ type Voting struct {
 	NotifiedAt        *time.Time `bson:"notifiedAt"`
 	TotalParticipants int        `bson:"totalParticipants"`
 	VoterIDs          []int64    `bson:"voterIds"`
-	StartedAt         time.Time  `bson:"startedAt"`
-	ClosedAt          *time.Time `bson:"closedAt"`
+	// OptionOwners holds the subscriber id behind each poll option, in the same
+	// order the options were sent to Telegram. Winners are resolved by position
+	// through this list, so two books whose options render to the same text stay
+	// distinct. Empty for polls started before this field existed.
+	OptionOwners []int64    `bson:"optionOwners"`
+	StartedAt    time.Time  `bson:"startedAt"`
+	ClosedAt     *time.Time `bson:"closedAt"`
 }
 
 // Winner is a winning book. A round can have several winners on a tie.
