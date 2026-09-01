@@ -91,9 +91,19 @@ type Participant struct {
 
 // Gathering is the book-collection phase (step 1).
 type Gathering struct {
-	Deadline     time.Time      `bson:"deadline"`
-	NotifyAt     time.Time      `bson:"notifyAt"`
-	NotifiedAt   *time.Time     `bson:"notifiedAt"`
+	Deadline time.Time `bson:"deadline"`
+
+	// RemindersSent is how many of the gathering reminders scheduled backwards
+	// from Deadline have already been sent. A tick sends a reminder only when the
+	// number of due schedule points exceeds this counter, which makes reminders
+	// idempotent across restarts and collapses a backlog built up during downtime
+	// into a single message. See bot/reminders.go.
+	//
+	// NOTE: no `omitempty`. It is written with an explicit $set, but a zero value
+	// must still be storable so a session that has sent nothing reads back as 0
+	// rather than being ambiguous with a missing field.
+	RemindersSent int `bson:"remindersSent"`
+
 	Participants []*Participant `bson:"participants"`
 }
 

@@ -31,7 +31,41 @@ time** (a second `/start_vote` while one is live is rejected).
    ends **regardless** of who has not finished — partial/absent submissions are
    simply dropped from the poll. The gathering also ends early if everyone has
    either finished or skipped.
-4. A pre-deadline **reminder** is sent to participants who have not finished.
+4. **Reminders** are anchored backwards from the deadline: one is due at
+   `deadline - k*interval` for every `k >= 1` whose point still falls strictly
+   inside the gathering window, where the interval is the
+   `gathering_reminder_interval` config key (`0` disables reminders entirely).
+   Every reminder is a **group message mentioning the participants who have not
+   submitted** — members who skipped are never mentioned. The `k == 1` reminder
+   is the **last call** and additionally DMs those participants.
+
+   Anchoring backwards rather than forwards from the start is what puts the
+   *final* reminder at a known distance from the deadline; counting forwards
+   would leave it at an arbitrary offset depending on how the interval divides
+   the window. The group message is sent with **HTML** parse mode (unlike the
+   Markdown used elsewhere) because it embeds member-supplied names, and a
+   Telegram username may legitimately contain `_`.
+
+5. **Quiet hours** (`quiet_hours_start` / `quiet_hours_end` / `timezone`,
+   default 23:00–08:00 Europe/Warsaw) suppress reminders overnight. A reminder
+   that comes due inside the window is **held, not dropped**: `remindersSent` is
+   left untouched, so the first tick after the window closes still sees it as
+   owed and sends it then — and a whole night's worth collapses into the single
+   message the backlog rule already produces. Dropping instead would risk
+   silently swallowing the last call, the only reminder that also DMs. An empty
+   `timezone`, or equal bounds, disables quiet hours.
+
+   Holding only applies while the window closes **before the deadline**. When it
+   would outlast the deadline, the reminder is sent inside the quiet window
+   instead, because waiting would drop it rather than delay it: the gathering
+   would end before the window ever closed. With prod's shape (24h window, 6h
+   interval, 23:00–08:00) this is what rounds started between 05:00 and 08:00
+   depend on — their last call falls at 23:00–02:00 with a deadline before the
+   window closes. A message at an antisocial hour beats no last call at all.
+
+   The runtime image is alpine without the `tzdata` package, so `cmd/main.go`
+   imports `_ "time/tzdata"` to embed the timezone database in the binary;
+   without it `time.LoadLocation` fails in the container.
 
 ### Step 2 — Voting
 
@@ -75,19 +109,26 @@ unique index — see [Indexes](#indexes)).
 
 ## Deadlines & recovery
 
-Each timed phase stores **absolute timestamps**, not durations:
+Each timed phase stores an **absolute deadline**, not a duration, plus a marker
+that makes its reminder idempotent across restarts:
 
 - `deadline` — when the phase must end.
-- `notifyAt` — when to send the pre-deadline reminder.
-- `notifiedAt` — set once the reminder is sent, so it fires exactly once
-  (idempotency across restarts).
+- gathering: `remindersSent` — how many of the reminders scheduled backwards
+  from `deadline` have been sent. The schedule itself is derived from the
+  deadline and the configured interval, so nothing else needs storing.
+- voting: `notifyAt` / `notifiedAt` — when the single pre-deadline reminder is
+  due, and when it was sent.
 
 A single **scheduler/recovery loop** (a ticker, ~every 15s) is the only driver:
 
 - On startup it loads the active session (if any) and resumes from its current
   status — no goroutines to re-spawn.
 - On each tick, for the active session:
-  - if `now >= notifyAt` and `notifiedAt` is unset → send reminder, set
+  - gathering: count the schedule points that are now due; if that count exceeds
+    `remindersSent` → send **one** reminder (the most recent due point) and store
+    the new count. Because the count is monotonic in `now`, a backlog built up
+    during downtime collapses into a single message instead of a burst;
+  - voting: if `now >= notifyAt` and `notifiedAt` is unset → send reminder, set
     `notifiedAt`;
   - if `now >= deadline` → end the phase (gathering → start poll, or
     voting → close poll & announce);
@@ -116,8 +157,9 @@ goroutines (the current in-memory approach):
   remaining durations to recompute and no goroutines to re-spawn. Catching up
   after downtime and normal operation are the *same* code path, so there is no
   separate recovery path to get wrong.
-- **Idempotent by construction.** The `notifiedAt` marker and the `status`
-  transition make acting twice a no-op, so a crash mid-action is safe.
+- **Idempotent by construction.** The `remindersSent` / `notifiedAt` markers and
+  the `status` transition make acting twice a no-op, so a crash mid-action is
+  safe.
 - **One code path** handles both "deadline passed while running" and "deadline
   passed while we were down."
 
@@ -155,8 +197,7 @@ MongoDB database: **`book_club_boot`**. New collection: **`book_club_sessions`**
 
   "gathering": {
     "deadline": "2026-06-03T10:00:00Z",
-    "notifyAt": "2026-06-03T08:00:00Z",
-    "notifiedAt": null,
+    "remindersSent": 0,
     "participants": [
       {
         "subscriberId": 123456789,
@@ -220,8 +261,7 @@ MongoDB database: **`book_club_boot`**. New collection: **`book_club_sessions`**
 | Field | BSON type | Notes |
 |---|---|---|
 | `deadline` | date | When gathering force-ends |
-| `notifyAt` | date | When the pre-deadline reminder is due |
-| `notifiedAt` | date \| null | Set once the reminder has been sent |
+| `remindersSent` | int32 | How many reminders scheduled backwards from `deadline` have been sent; the next one fires only once a further point comes due |
 | `participants` | array | Embedded `Participant` objects |
 
 ### `Participant` (embedded)

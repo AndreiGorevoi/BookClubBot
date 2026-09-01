@@ -222,9 +222,10 @@ func (s *SessionRepository) SetStatus(ctx context.Context, id primitive.ObjectID
 	return nil
 }
 
-// SetGatheringNotified marks the gathering pre-deadline reminder as sent.
-func (s *SessionRepository) SetGatheringNotified(ctx context.Context, id primitive.ObjectID, at time.Time) error {
-	return s.setField(ctx, id, "gathering.notifiedAt", at.UTC())
+// SetGatheringRemindersSent records how many gathering reminders have been sent
+// so far, so the next tick only fires once a further schedule point comes due.
+func (s *SessionRepository) SetGatheringRemindersSent(ctx context.Context, id primitive.ObjectID, count int) error {
+	return s.setField(ctx, id, "gathering.remindersSent", count)
 }
 
 // SetVotingNotified marks the voting pre-deadline reminder as sent.

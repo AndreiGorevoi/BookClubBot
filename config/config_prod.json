@@ -1,6 +1,9 @@
 {
   "time_to_gather_books": 86400,
-  "notify_before_gathering": 43200,
+  "gathering_reminder_interval": 21600,
+  "quiet_hours_start": 23,
+  "quiet_hours_end": 8,
+  "timezone": "Europe/Warsaw",
   "time_for_telegram_poll": 86400,
   "notify_before_poll": 43200,
   "debug_mode": false,
