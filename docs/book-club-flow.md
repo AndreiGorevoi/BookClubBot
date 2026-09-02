@@ -20,7 +20,8 @@ time** (a second `/start_vote` while one is live is rejected).
 
 ### Step 1 — Book gathering
 
-1. A subscriber runs `/start_vote`.
+1. An admin runs `/start_vote` (admins are the Telegram user ids listed in
+   `admin_ids` / the `ADMIN_IDS` env var; anyone else is refused).
 2. The bot DMs every active subscriber and walks each one through the book
    submission conversation, one question at a time:
    `title → author → description → cover image → review → done`.

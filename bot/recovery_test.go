@@ -20,9 +20,11 @@ type fakeSessionRepo struct {
 	startedVoting int
 	remindersSent int
 	remindersErr  error
+	created       int
 }
 
 func (f *fakeSessionRepo) CreateSession(context.Context, *models.BookClubSession) error {
+	f.created++
 	return nil
 }
 func (f *fakeSessionRepo) GetActiveSession(context.Context) (*models.BookClubSession, error) {

@@ -14,7 +14,8 @@ Telegram Poll Bot is a Go-based bot designed to facilitate book club meetings by
 
 - Go 1.18 or higher
 - Telegram Bot API Key - **Must be placed as telegrammApiKey env variable** (create a bot using [BotFather](https://core.telegram.org/bots#botfather))
-- A configured Telegram group to use the bot - **Must be places as groupId env variable**
+- A configured Telegram group to use the bot (the group id is stored automatically when the bot is added to the group)
+- At least one **admin** — the Telegram numeric user id of whoever is allowed to run `/start_vote` (see [Admins](#admins))
 
 ## Installation
 
@@ -39,7 +40,8 @@ Telegram Poll Bot is a Go-based bot designed to facilitate book club meetings by
        "quiet_hours_end": 8,
        "timezone": "Europe/Warsaw",
        "time_for_telegram_poll": 1800,
-       "notify_before_poll": 300
+       "notify_before_poll": 300,
+       "admin_ids": [123456789]
      }
      ```
 
@@ -51,8 +53,35 @@ Telegram Poll Bot is a Go-based bot designed to facilitate book club meetings by
 ## Usage
 
 - **/subscribe**: Subscribe to the bot to participate in future polls.
-- **/start_vote**: Start a new book gathering and initiate the voting process.
+- **/start_vote**: Start a new book gathering and initiate the voting process. **Admins only** — anyone else gets a polite refusal.
 - **/skip**: Skip suggesting a book during the gathering phase.
+
+## Admins
+
+Only admins can run `/start_vote`. An admin is identified by their Telegram
+**numeric user id** (not the `@username`). To find yours, open a chat with
+[@userinfobot](https://t.me/userinfobot) and press *Start* — it replies with
+your `Id`.
+
+Admins are configured in one of two places:
+
+1. `admin_ids` in `config/config_<env>.json`:
+   ```json
+   "admin_ids": [123456789, 987654321]
+   ```
+2. The `ADMIN_IDS` environment variable, as a comma-separated list. When set it
+   **replaces** the JSON list, so a deployment (Railway, Docker) can define admins
+   without editing the shipped config:
+   ```bash
+   ADMIN_IDS=123456789,987654321
+   ```
+   For local development put it in `.env` next to `telegrammApiKey`.
+
+If neither is set the bot starts with a warning and `/start_vote` is refused for
+everyone. A malformed `ADMIN_IDS` value (anything that is not a comma-separated
+list of integers) stops the bot at startup rather than silently locking the
+admins out. Admins still have to `/subscribe` like any other member before the
+bot accepts their commands.
 
 ## Directory Structure
 
