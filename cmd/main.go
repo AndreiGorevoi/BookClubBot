@@ -16,13 +16,15 @@ import (
 )
 
 func main() {
+	// Log to stdout so the platform (Railway, Docker, etc.) captures logs. Set
+	// before anything else logs: LoadConfig warns when no admins are configured,
+	// and that warning must land in the same stream as the rest.
+	log.SetOutput(os.Stdout)
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Log to stdout so the platform (Railway, Docker, etc.) captures logs.
-	log.SetOutput(os.Stdout)
 
 	msg, err := message.LoadMessaged()
 	if err != nil {

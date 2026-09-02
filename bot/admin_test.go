@@ -32,7 +32,10 @@ func newFakeTelegram(t *testing.T) *fakeTelegram {
 	t.Helper()
 	f := &fakeTelegram{}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, r.ParseForm())
+		// Runs on the server goroutine: report with t.Error, never FailNow.
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("fake telegram: cannot parse form: %v", err)
+		}
 		if r.URL.Path == "/bottest-token/sendMessage" {
 			f.mu.Lock()
 			f.sent = append(f.sent, sentMessage{chatID: r.Form.Get("chat_id"), text: r.Form.Get("text")})
