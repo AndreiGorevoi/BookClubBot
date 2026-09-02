@@ -6,6 +6,7 @@
   "timezone": "",
   "time_for_telegram_poll": 60,
   "notify_before_poll": 30,
+  "admin_ids": [],
   "debug_mode": true,
   "long_polling_timeout": 60,
   "mongo_uri": "mongodb://localhost:27017",

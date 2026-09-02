@@ -314,9 +314,28 @@ func (b *Bot) handleOnboardingCallback(cq *tgbotapi.CallbackQuery) {
 	b.answerCallback(cq.ID, "")
 }
 
+// isAdmin reports whether uid is one of the configured admin user IDs. With no
+// admins configured it is false for everyone: the admin commands are gated
+// closed until someone is explicitly granted access.
+func (b *Bot) isAdmin(uid int64) bool {
+	for _, id := range b.cfg.AdminIDs {
+		if id == uid {
+			return true
+		}
+	}
+	return false
+}
+
 // handleStartVote opens a new book gathering session and DMs every active
-// subscriber to suggest a book.
+// subscriber to suggest a book. Only admins may run it.
 func (b *Bot) handleStartVote(update *tgbotapi.Update) error {
+	uid := update.Message.From.ID
+	if !b.isAdmin(uid) {
+		log.Printf("/start_vote denied for non-admin user %d", uid)
+		b.sendMessage(uid, b.messages.StartVoteAdminOnly)
+		return nil
+	}
+
 	if b.cfg.GroupId == 0 {
 		b.sendMessage(update.Message.From.ID, b.messages.CannotStartGatheringGroupIdMissing)
 		return nil

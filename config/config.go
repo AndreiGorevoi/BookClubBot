@@ -4,13 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 const folder = "./config"
+
+// adminIDsEnv is the environment variable that overrides the JSON admin_ids
+// list, so a deployment (Railway, Docker) can set admins without editing the
+// shipped config. Comma-separated Telegram numeric user IDs: "123,456".
+const adminIDsEnv = "adminIds"
 
 type AppConfig struct {
 	GroupId             int64
@@ -37,7 +45,13 @@ type AppConfig struct {
 
 	// Location is Timezone resolved at startup. A nil Location disables quiet
 	// hours, so reminders are never held.
-	Location  *time.Location
+	Location *time.Location
+
+	// AdminIDs are the Telegram numeric user IDs allowed to run admin commands
+	// such as /start_vote. The adminIds env var, when set, replaces the JSON
+	// list. An empty list denies the admin commands to everyone (fail-closed).
+	AdminIDs []int64 `json:"admin_ids"`
+
 	TKey      string
 	MongoURI  string `json:"mongo_uri"`
 	DBName    string `json:"db_name"`
@@ -67,7 +81,48 @@ func LoadConfig() (*AppConfig, error) {
 		return nil, err
 	}
 
+	if err := cfg.applyAdminIDsEnv(os.Getenv(adminIDsEnv)); err != nil {
+		return nil, err
+	}
+	if len(cfg.AdminIDs) == 0 {
+		log.Printf("WARNING: no admin IDs configured (admin_ids in config or %s env); /start_vote is disabled for everyone", adminIDsEnv)
+	}
+
 	return cfg, nil
+}
+
+// applyAdminIDsEnv replaces AdminIDs with the IDs parsed from raw, the value of
+// the adminIds env var. An unset or blank value leaves the JSON list as is; a
+// value that does not parse fails loudly rather than silently locking the
+// admins out.
+func (c *AppConfig) applyAdminIDsEnv(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	ids, err := parseAdminIDs(raw)
+	if err != nil {
+		return fmt.Errorf("cannot parse %s env variable: %w", adminIDsEnv, err)
+	}
+	c.AdminIDs = ids
+	return nil
+}
+
+// parseAdminIDs parses a comma-separated list of Telegram user IDs. Whitespace
+// around entries and empty entries are ignored.
+func parseAdminIDs(raw string) ([]int64, error) {
+	var ids []int64
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Telegram user id %q", part)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // resolveQuietHours validates the quiet-hours window and loads its timezone.

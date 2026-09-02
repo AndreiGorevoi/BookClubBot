@@ -37,6 +37,7 @@ type LocalizedMessages struct {
 	TimeLeftMinutes                    string `json:"time_left_minutes"`
 	VotingEndsInHours                  string `json:"voting_ends_in_hours"`
 	CannotStartGatheringGroupIdMissing string `json:"cannot_start_gathering_groupId_missing"`
+	StartVoteAdminOnly                 string `json:"start_vote_admin_only"`
 	BookAlreadyProposed                string `json:"book_already_proposed"`
 	HelpInfo                           string `json:"help_info"`
 	SomethingWrong                     string `json:"something_wrong"`
