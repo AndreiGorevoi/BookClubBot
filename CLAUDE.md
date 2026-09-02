@@ -32,12 +32,12 @@ Required env vars:
 - `telegrammApiKey` — Telegram Bot API token (can be set in `.env`)
 - `APP_ENV` — optional, defaults to `dev`
 - `APP_LOCALE` — optional, defaults to `ru` (loads `message/messages_<locale>.json`)
-- `adminIds` — optional, comma-separated Telegram numeric user ids (`123,456`); when set it replaces the `admin_ids` list from the JSON config
+- `ADMIN_IDS` — optional, comma-separated Telegram numeric user ids (`123,456`); when set it replaces the `admin_ids` list from the JSON config
 
-**Admins** (`admin_ids` in the JSON config, or the `adminIds` env override) are the
+**Admins** (`admin_ids` in the JSON config, or the `ADMIN_IDS` env override) are the
 only users allowed to run `/start_vote`; the check is `Bot.isAdmin`. An empty list
 denies the command to everyone and logs a warning at startup (fail-closed). A
-malformed `adminIds` value fails startup.
+malformed `ADMIN_IDS` value fails startup.
 
 MongoDB connection string and DB name come from the JSON config (`mongo_uri`, `db_name`). Dev config points to `mongodb://localhost:27017`, DB `book_club_boot`.
 

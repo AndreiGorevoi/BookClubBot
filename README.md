@@ -69,16 +69,16 @@ Admins are configured in one of two places:
    ```json
    "admin_ids": [123456789, 987654321]
    ```
-2. The `adminIds` environment variable, as a comma-separated list. When set it
+2. The `ADMIN_IDS` environment variable, as a comma-separated list. When set it
    **replaces** the JSON list, so a deployment (Railway, Docker) can define admins
    without editing the shipped config:
    ```bash
-   adminIds=123456789,987654321
+   ADMIN_IDS=123456789,987654321
    ```
    For local development put it in `.env` next to `telegrammApiKey`.
 
 If neither is set the bot starts with a warning and `/start_vote` is refused for
-everyone. A malformed `adminIds` value (anything that is not a comma-separated
+everyone. A malformed `ADMIN_IDS` value (anything that is not a comma-separated
 list of integers) stops the bot at startup rather than silently locking the
 admins out. Admins still have to `/subscribe` like any other member before the
 bot accepts their commands.

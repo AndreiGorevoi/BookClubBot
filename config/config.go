@@ -18,7 +18,11 @@ const folder = "./config"
 // adminIDsEnv is the environment variable that overrides the JSON admin_ids
 // list, so a deployment (Railway, Docker) can set admins without editing the
 // shipped config. Comma-separated Telegram numeric user IDs: "123,456".
-const adminIDsEnv = "adminIds"
+//
+// The name follows the platform convention of the other environment variables
+// (APP_ENV, MONGO_URL); telegrammApiKey predates it and is kept only because
+// renaming it would break the running deployments.
+const adminIDsEnv = "ADMIN_IDS"
 
 type AppConfig struct {
 	GroupId             int64
@@ -48,7 +52,7 @@ type AppConfig struct {
 	Location *time.Location
 
 	// AdminIDs are the Telegram numeric user IDs allowed to run admin commands
-	// such as /start_vote. The adminIds env var, when set, replaces the JSON
+	// such as /start_vote. The ADMIN_IDS env var, when set, replaces the JSON
 	// list. An empty list denies the admin commands to everyone (fail-closed).
 	AdminIDs []int64 `json:"admin_ids"`
 
@@ -92,7 +96,7 @@ func LoadConfig() (*AppConfig, error) {
 }
 
 // applyAdminIDsEnv replaces AdminIDs with the IDs parsed from raw, the value of
-// the adminIds env var. An unset or blank value leaves the JSON list as is; a
+// the ADMIN_IDS env var. An unset or blank value leaves the JSON list as is; a
 // value that does not parse fails loudly rather than silently locking the
 // admins out.
 func (c *AppConfig) applyAdminIDsEnv(raw string) error {
