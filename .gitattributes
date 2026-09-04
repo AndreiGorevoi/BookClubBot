@@ -1,0 +1,3 @@
+# The vendored Telegram Bot API mirror is generated, not authored: keep it out
+# of diffs and language stats. Refresh it with scripts/fetch_telegram_docs.py.
+docs/vendor/** linguist-vendored -diff
