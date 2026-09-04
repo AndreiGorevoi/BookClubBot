@@ -80,5 +80,8 @@
   "admin_btn_unsub_confirm": "Да, отписать",
   "admin_unsub_done": "%s больше не участник клуба.",
   "admin_unsub_gone": "Этот участник уже отписан.",
-  "admin_action_failed": "Не получилось выполнить действие. Попробуй ещё раз."
+  "admin_action_failed": "Не получилось выполнить действие. Попробуй ещё раз.",
+  "admin_end_poll_failed": "Не удалось закрыть опрос в группе, раунд не тронут. Попробуй ещё раз.",
+  "admin_session_no_poll": "Опрос в группе ещё не создан.",
+  "admin_session_reading_book": "Читаем: %s"
 }

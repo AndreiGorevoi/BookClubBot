@@ -160,7 +160,14 @@ func (s *SessionRepository) StartVoting(ctx context.Context, id primitive.Object
 	}
 
 	collection := s.db.Collection(sessions_collection)
-	filter := bson.M{"_id": id}
+	// Only an active session may start voting. The poll goes out to Telegram
+	// before this write lands, and the round can end in that window (an admin
+	// ending it from the console), in which case this $set would put the status
+	// and the active lock back and resurrect a session somebody already ended.
+	// Guarding on the lock — rather than on a specific status — still allows the
+	// normal gathering -> voting transition. No match is reported as ErrNotFound,
+	// which tells the caller its poll is orphaned.
+	filter := bson.M{"_id": id, "activeLock": bson.M{"$exists": true}}
 	update := bson.M{"$set": bson.M{
 		"voting":     voting,
 		"status":     models.StatusVoting,

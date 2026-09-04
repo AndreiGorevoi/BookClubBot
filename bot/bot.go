@@ -861,6 +861,14 @@ func (b *Bot) runTelegramPollFlow() {
 	b.msgAboutGatheringBooks(session)
 
 	if err := b.runTelegramPoll(session); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			// The round stopped being in voting while the poll was going out — an
+			// admin ended it from the console. runTelegramPoll has already closed
+			// the poll it sent; the session is terminal and must stay that way, so
+			// there is nothing left to cancel here.
+			log.Printf("round %s was ended while its poll was starting", session.ID.Hex())
+			return
+		}
 		log.Printf("ERROR: cannot run poll: %v\n", err)
 		// Could not start a poll. End the round so a new one can be started, and
 		// tell the group why when the cause is too few books (rather than
@@ -925,7 +933,27 @@ func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
 		StartedAt:         now,
 		OptionOwners:      owners,
 	}
-	return b.sessionRepository.StartVoting(context.Background(), session.ID, voting)
+	if err := b.sessionRepository.StartVoting(context.Background(), session.ID, voting); err != nil {
+		// The poll is already in the group but no session will reference it —
+		// nothing would ever close it or count its votes. Take it back down.
+		if stopErr := b.stopPoll(msg.MessageID); stopErr != nil {
+			log.Printf("cannot close the poll of session %s that failed to start: %v", session.ID.Hex(), stopErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// stopPoll closes a poll in the group chat. Callers that need the final vote
+// counts use StopPoll directly; this is for the paths that only need the poll
+// gone.
+func (b *Bot) stopPoll(messageID int) error {
+	stop := tgbotapi.StopPollConfig{BaseEdit: tgbotapi.BaseEdit{
+		ChatID:    b.cfg.GroupId,
+		MessageID: messageID,
+	}}
+	_, err := b.tgBot.StopPoll(stop)
+	return err
 }
 
 // closeTelegramPoll stops the poll, records the winner(s) and completes the

@@ -221,12 +221,22 @@ func (b *Bot) adminSessionView() adminView {
 			fmt.Sprintf(b.messages.AdminSessionSkipped, len(skipped), b.nameList(skipped)),
 		)
 	case models.StatusVoting:
-		if session.Voting != nil {
-			lines = append(lines,
-				b.deadlineLine(session.Voting.Deadline, now),
-				"",
-				fmt.Sprintf(b.messages.AdminSessionVotes, len(session.Voting.VoterIDs), session.Voting.TotalParticipants),
-			)
+		if session.Voting == nil {
+			// The poll never made it out (see wedgedVotingGrace in recovery.go).
+			// This is exactly the state an admin opens the console to diagnose, so
+			// say so rather than showing a bare header.
+			lines = append(lines, b.messages.AdminSessionNoPoll)
+			break
+		}
+		lines = append(lines,
+			b.deadlineLine(session.Voting.Deadline, now),
+			"",
+			fmt.Sprintf(b.messages.AdminSessionVotes, len(session.Voting.VoterIDs), session.Voting.TotalParticipants),
+		)
+	case models.StatusReading:
+		if session.Reading != nil {
+			lines = append(lines, fmt.Sprintf(b.messages.AdminSessionReadingBook,
+				elide(b.bookLabel(session.Reading.Book.Title, session.Reading.Book.Author), adminNameMaxLen*2)))
 		}
 	}
 
@@ -255,34 +265,72 @@ func (b *Bot) adminEndConfirmView() adminView {
 	return adminView{text: text, keyboard: &kb}
 }
 
-// endActiveSession cancels the round on the admin's behalf. The status write
-// goes through the same lock as every other phase transition so it cannot race
-// the recovery loop, and the group is told the round is off.
+// endActiveSession cancels the round on the admin's behalf.
+//
+// The group poll is closed BEFORE the status becomes terminal, for the same
+// reason closeTelegramPoll completes only after its own StopPoll succeeds: once
+// the session is cancelled it is no longer active, so nothing — not the
+// recovery loop, not a later vote — would ever retry the stop, and the group
+// would be left voting in a poll no one counts. A failed stop therefore leaves
+// the round alone so the admin can press again.
+//
+// The status write itself goes through b.mu, the lock every other phase
+// transition takes, so it cannot race the recovery loop.
 func (b *Bot) endActiveSession() (adminView, string) {
 	b.mu.Lock()
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	b.mu.Unlock()
 	if err != nil {
-		b.mu.Unlock()
 		log.Printf("admin: cannot load active session to end it: %v", err)
 		return b.adminErrorView(), b.messages.AdminActionFailed
 	}
 	if session == nil {
-		b.mu.Unlock()
 		// Someone (or the deadline) got there first — nothing to end.
 		return b.adminRootView(), ""
 	}
-	if err := b.sessionRepository.SetStatus(context.Background(), session.ID, models.StatusCancelled); err != nil {
+
+	if pollID, ok := openPoll(session); ok && b.cfg.GroupId != 0 {
+		if err := b.stopPoll(pollID); err != nil {
+			log.Printf("admin: cannot stop the poll of session %s, leaving the round alone: %v", session.ID.Hex(), err)
+			return b.adminEndConfirmView(), b.messages.AdminEndPollFailed
+		}
+	}
+
+	b.mu.Lock()
+	current, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
 		b.mu.Unlock()
-		log.Printf("admin: cannot cancel session %s: %v", session.ID.Hex(), err)
+		log.Printf("admin: cannot re-read the session to end it: %v", err)
+		return b.adminErrorView(), b.messages.AdminActionFailed
+	}
+	if current == nil {
+		b.mu.Unlock()
+		return b.adminRootView(), ""
+	}
+	if current.ID != session.ID {
+		// A different round started while the poll was being closed; cancelling it
+		// is not what the admin confirmed.
+		b.mu.Unlock()
+		return b.adminRootView(), ""
+	}
+	if err := b.sessionRepository.SetStatus(context.Background(), current.ID, models.StatusCancelled); err != nil {
+		b.mu.Unlock()
+		log.Printf("admin: cannot cancel session %s: %v", current.ID.Hex(), err)
 		return b.adminErrorView(), b.messages.AdminActionFailed
 	}
 	b.mu.Unlock()
 
-	log.Printf("admin: session %s cancelled manually from the console", session.ID.Hex())
+	log.Printf("admin: session %s cancelled manually from the console", current.ID.Hex())
 
-	// Best effort from here: the round is already cancelled in the database, and
-	// neither of these is worth failing the action over.
-	b.stopPollForCancelledSession(session)
+	// A poll that appeared between the two reads (the round advanced to voting
+	// under us) still has to come down, but the round is already cancelled by
+	// now, so this one is best effort.
+	if pollID, ok := openPoll(current); ok && b.cfg.GroupId != 0 && !samePoll(session, pollID) {
+		if err := b.stopPoll(pollID); err != nil {
+			log.Printf("admin: cannot stop the poll started under the cancelled session %s: %v", current.ID.Hex(), err)
+		}
+	}
+
 	if b.cfg.GroupId != 0 {
 		b.sendMessage(b.cfg.GroupId, b.messages.AdminRoundCancelledGroup)
 	}
@@ -290,19 +338,18 @@ func (b *Bot) endActiveSession() (adminView, string) {
 	return b.adminRootView(), b.messages.AdminEndDone
 }
 
-// stopPollForCancelledSession closes the group poll of a round that was ended
-// mid-vote, so an open poll is not left behind collecting votes nobody counts.
-func (b *Bot) stopPollForCancelledSession(session *models.BookClubSession) {
-	if session.Status != models.StatusVoting || session.Voting == nil || b.cfg.GroupId == 0 {
-		return
+// openPoll returns the message id of the session's group poll, if it has one.
+func openPoll(session *models.BookClubSession) (int, bool) {
+	if session.Status != models.StatusVoting || session.Voting == nil {
+		return 0, false
 	}
-	stop := tgbotapi.StopPollConfig{BaseEdit: tgbotapi.BaseEdit{
-		ChatID:    b.cfg.GroupId,
-		MessageID: session.Voting.TelegramPollID,
-	}}
-	if _, err := b.tgBot.StopPoll(stop); err != nil {
-		log.Printf("admin: cannot stop the poll of cancelled session %s: %v", session.ID.Hex(), err)
-	}
+	return session.Voting.TelegramPollID, true
+}
+
+// samePoll reports whether the session already carried this poll, so an
+// already-stopped poll is not stopped twice.
+func samePoll(session *models.BookClubSession, pollID int) bool {
+	return session.Voting != nil && session.Voting.TelegramPollID == pollID
 }
 
 // adminUnsubListView offers the active subscribers as buttons, one per row.
@@ -380,8 +427,43 @@ func (b *Bot) unsubscribeMember(id int64) (adminView, string) {
 	}
 
 	log.Printf("admin: subscriber %d unsubscribed from the console", id)
+	b.dropFromGathering(id)
+
 	toast := fmt.Sprintf(b.messages.AdminUnsubDone, memberLabel(s, adminNameMaxLen))
 	return b.adminUnsubListView(0), toast
+}
+
+// dropFromGathering releases a round in flight from a member who has just been
+// unsubscribed. Archiving alone only stops future invitations: the member stays
+// in the current session's participant list, where pendingParticipants keeps
+// @mentioning them in every group reminder and DMing them the last call, and
+// where allBooksChosen keeps waiting for a submission that will never come.
+//
+// A member who already submitted is left as they are — their book was offered
+// to the club and is on the ballot; quietly shrinking the ballot mid-round is a
+// bigger surprise than a book from someone who has since left.
+func (b *Bot) dropFromGathering(id int64) {
+	session, err := b.sessionRepository.GetActiveSession(context.Background())
+	if err != nil {
+		log.Printf("admin: cannot check the active round for unsubscribed member %d: %v", id, err)
+		return
+	}
+	if session == nil || session.Status != models.StatusGathering {
+		return
+	}
+	p := findParticipant(session, id)
+	if p == nil || p.Step == models.StepDone || p.Step == models.StepSkipped {
+		return
+	}
+
+	p.Step = models.StepSkipped
+	b.persistParticipant(session.ID, p)
+	log.Printf("admin: unsubscribed member %d dropped from round %s", id, session.ID.Hex())
+
+	// They may have been the last one the round was waiting for.
+	if allBooksChosen(session) {
+		b.runTelegramPollFlow()
+	}
 }
 
 // activeSubscribers loads the club's members in a stable order, so page 2 of a

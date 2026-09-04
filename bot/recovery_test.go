@@ -46,6 +46,14 @@ func (f *fakeSessionRepo) SetWinners(context.Context, primitive.ObjectID, []mode
 }
 func (f *fakeSessionRepo) SetStatus(_ context.Context, _ primitive.ObjectID, status string) error {
 	f.statusSet = append(f.statusSet, status)
+	// Mirror the repository: a terminal status releases the active lock, so the
+	// session stops being the active one. Without this a test could not tell a
+	// cancelled round from a live one.
+	if !models.IsActiveStatus(status) {
+		f.active = nil
+	} else if f.active != nil {
+		f.active.Status = status
+	}
 	return nil
 }
 func (f *fakeSessionRepo) SetGatheringRemindersSent(_ context.Context, _ primitive.ObjectID, count int) error {

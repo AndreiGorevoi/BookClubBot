@@ -211,8 +211,24 @@ Two rules the console lives by:
   there.
 
 Ending a round writes the status under `bot.mu`, the same lock every other phase
-transition takes, so it cannot race the recovery loop. A round ended mid-vote
-also has its group poll stopped, best effort, so no open poll is left behind.
+transition takes, so it cannot race the recovery loop. Two ordering rules make
+that safe:
+
+- **The poll is closed before the status becomes terminal**, the same way
+  `closeTelegramPoll` completes a round only after its own `StopPoll` succeeds.
+  Once a session is cancelled it is no longer active, so nothing would ever
+  retry the stop; a failed stop therefore leaves the round alone and the admin
+  can press again.
+- **`StartVoting` only writes to a session that still holds the active lock.**
+  A poll is sent to Telegram before the voting sub-document is persisted, so a
+  round can be ended in that window; without the guard the late write would put
+  `status` and `activeLock` back and resurrect it. The refused write comes back
+  as `ErrNotFound`, and the poll that was already sent is closed.
+
+Unsubscribing a member also releases the round in flight: a member still owing a
+book is moved to `skipped`, so the reminders stop mentioning them and
+`allBooksChosen` is no longer waiting on them. A member who already submitted
+keeps their book on the ballot.
 
 ---
 

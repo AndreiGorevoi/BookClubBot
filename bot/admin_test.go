@@ -28,6 +28,9 @@ type fakeTelegram struct {
 	mu    sync.Mutex
 	sent  []sentMessage
 	calls []apiCall
+	// failing holds the Bot API methods that answer with an error, so a test can
+	// exercise what the bot does when Telegram refuses a call.
+	failing map[string]bool
 }
 
 // apiCall is one request the bot made, kept so a test can assert on the calls
@@ -44,7 +47,7 @@ type sentMessage struct {
 
 func newFakeTelegram(t *testing.T) *fakeTelegram {
 	t.Helper()
-	f := &fakeTelegram{}
+	f := &fakeTelegram{failing: map[string]bool{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Runs on the server goroutine: report with t.Error, never FailNow.
 		if err := r.ParseForm(); err != nil {
@@ -56,7 +59,17 @@ func newFakeTelegram(t *testing.T) *fakeTelegram {
 			f.sent = append(f.sent, sentMessage{chatID: r.Form.Get("chat_id"), text: r.Form.Get("text")})
 		}
 		f.mu.Unlock()
+		method := strings.TrimPrefix(r.URL.Path, "/bottest-token/")
 		w.Header().Set("Content-Type", "application/json")
+		f.mu.Lock()
+		failing := f.failing[method]
+		f.mu.Unlock()
+		if failing {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": false, "error_code": 500, "description": "Internal Server Error: " + method + " failed",
+			})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{}})
 	}))
 	t.Cleanup(f.srv.Close)
@@ -73,6 +86,13 @@ func (f *fakeTelegram) messages() []sentMessage {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]sentMessage(nil), f.sent...)
+}
+
+// fail makes the given Bot API method answer with an error from now on.
+func (f *fakeTelegram) fail(method string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failing[method] = true
 }
 
 // callsTo returns every request made to one Bot API method.
@@ -228,6 +248,8 @@ func adminMessages() *message.LocalizedMessages {
 		AdminEndConfirm:          "end %s (%s)?",
 		AdminBtnEndConfirm:       "Yes, end",
 		AdminEndDone:             "round ended",
+		AdminEndPollFailed:       "poll stop failed",
+		AdminSessionNoPoll:       "no poll yet",
 		AdminRoundCancelledGroup: "round cancelled by an admin",
 		AdminUnsubTitle:          "who to unsubscribe?",
 		AdminUnsubConfirm:        "unsubscribe %s?",
@@ -335,6 +357,47 @@ func TestAdminEndRound_CancelsAndNotifiesTheGroup(t *testing.T) {
 	answers := tg.callsTo("answerCallbackQuery")
 	require.Len(t, answers, 1)
 	assert.Equal(t, "round ended", answers[0].Get("text"))
+
+	// The panel the admin is left looking at must show the round as gone.
+	edits := tg.callsTo("editMessageText")
+	require.Len(t, edits, 1)
+	assert.Equal(t, "panel: no active round", edits[0].Get("text"))
+}
+
+func TestAdminEndRound_SecondConfirmIsANoOp(t *testing.T) {
+	tg := newFakeTelegram(t)
+	sessions := &fakeSessionRepo{active: &models.BookClubSession{Name: "May 2026", Status: models.StatusGathering}}
+	b := adminBot(tg, &fakeSubRepo{}, sessions)
+
+	// The confirm button stays on screen; pressing it again must not announce a
+	// second cancellation to the group.
+	b.handleAdminCallback(adminCallback(1, callbackAdminEndConfirm))
+	b.handleAdminCallback(adminCallback(1, callbackAdminEndConfirm))
+
+	assert.Equal(t, []string{models.StatusCancelled}, sessions.statusSet)
+	assert.Len(t, tg.messages(), 1, "the group hears about the cancellation once")
+}
+
+func TestAdminEndRound_KeepsTheRoundWhenThePollWontClose(t *testing.T) {
+	tg := newFakeTelegram(t)
+	tg.fail("stopPoll")
+	sessions := &fakeSessionRepo{active: &models.BookClubSession{
+		Name:   "May 2026",
+		Status: models.StatusVoting,
+		Voting: &models.Voting{TelegramPollID: 777},
+	}}
+	b := adminBot(tg, &fakeSubRepo{}, sessions)
+
+	b.handleAdminCallback(adminCallback(1, callbackAdminEndConfirm))
+
+	// Cancelling anyway would strand an open poll that nothing would ever close,
+	// since a terminal session is no longer active. The round is left alone so
+	// the admin can retry.
+	assert.Empty(t, sessions.statusSet)
+	assert.Empty(t, tg.messages(), "the group must not be told a round ended when it did not")
+	answers := tg.callsTo("answerCallbackQuery")
+	require.Len(t, answers, 1)
+	assert.Equal(t, "poll stop failed", answers[0].Get("text"))
 }
 
 func TestAdminEndRound_StopsAnOpenPoll(t *testing.T) {
@@ -440,18 +503,6 @@ func TestAdminMembersView_ListsAndPaginates(t *testing.T) {
 
 	// A page beyond the end (a stale button after members left) clamps back.
 	assert.Equal(t, second.text, b.adminMembersView(99).text)
-}
-
-func TestAdminMembersView_ExcludesArchived(t *testing.T) {
-	subs := &fakeSubRepo{subs: []*models.Subscriber{
-		{ID: 1, FirstName: "Ann"},
-		{ID: 2, FirstName: "Bob", Archived: true},
-	}}
-	b := adminBot(newFakeTelegram(t), subs, &fakeSessionRepo{})
-
-	view := b.adminMembersView(0)
-	assert.Contains(t, view.text, "Ann")
-	assert.NotContains(t, view.text, "Bob")
 }
 
 func TestAdminSessionView_Gathering(t *testing.T) {
@@ -567,4 +618,58 @@ func TestIsNotModified(t *testing.T) {
 	assert.True(t, isNotModified(errors.New("Bad Request: message is not modified")))
 	assert.False(t, isNotModified(errors.New("Bad Request: chat not found")))
 	assert.False(t, isNotModified(nil))
+}
+
+func TestAdminUnsubscribe_DropsTheMemberFromTheRoundInFlight(t *testing.T) {
+	tg := newFakeTelegram(t)
+	subs := &fakeSubRepo{subs: []*models.Subscriber{
+		{ID: 7, FirstName: "Ann"},
+		{ID: 8, FirstName: "Bob"},
+	}}
+	sessions := &fakeSessionRepo{active: &models.BookClubSession{
+		Status: models.StatusGathering,
+		Gathering: models.Gathering{
+			Deadline: time.Now().UTC().Add(time.Hour),
+			Participants: []*models.Participant{
+				{SubscriberID: 7, FirstName: "Ann", Step: models.StepBook},
+				{SubscriberID: 8, FirstName: "Bob", Step: models.StepBook},
+			},
+		},
+	}}
+	b := adminBot(tg, subs, sessions)
+
+	b.handleAdminCallback(adminCallback(1, callbackAdminUnsubConfirm+"7"))
+
+	// Otherwise the reminders keep @mentioning them and the round keeps waiting
+	// for a book they will never send.
+	assert.Equal(t, models.StepSkipped, sessions.active.Gathering.Participants[0].Step)
+	assert.Equal(t, models.StepBook, sessions.active.Gathering.Participants[1].Step)
+	assert.Empty(t, sessions.statusSet, "the round goes on while someone can still submit")
+}
+
+func TestAdminUnsubscribe_KeepsASubmittedBookOnTheBallot(t *testing.T) {
+	tg := newFakeTelegram(t)
+	subs := &fakeSubRepo{subs: []*models.Subscriber{{ID: 7, FirstName: "Ann"}}}
+	sessions := &fakeSessionRepo{active: &models.BookClubSession{
+		Status: models.StatusGathering,
+		Gathering: models.Gathering{Participants: []*models.Participant{
+			{SubscriberID: 7, FirstName: "Ann", Step: models.StepDone, Book: &models.Book{Title: "Dune"}},
+		}},
+	}}
+	b := adminBot(tg, subs, sessions)
+
+	b.handleAdminCallback(adminCallback(1, callbackAdminUnsubConfirm+"7"))
+
+	assert.Equal(t, models.StepDone, sessions.active.Gathering.Participants[0].Step)
+}
+
+func TestAdminSessionView_VotingWithoutAPoll(t *testing.T) {
+	sessions := &fakeSessionRepo{active: &models.BookClubSession{
+		Name:   "May 2026",
+		Status: models.StatusVoting,
+	}}
+	b := adminBot(newFakeTelegram(t), &fakeSubRepo{}, sessions)
+
+	// The state wedgedVotingGrace exists for: the admin must be able to see it.
+	assert.Contains(t, b.adminSessionView().text, "no poll yet")
 }

@@ -83,10 +83,13 @@ type LocalizedMessages struct {
 	AdminSessionPending      string `json:"admin_session_pending"`
 	AdminSessionSkipped      string `json:"admin_session_skipped"`
 	AdminSessionVotes        string `json:"admin_session_votes"`
+	AdminSessionNoPoll       string `json:"admin_session_no_poll"`
+	AdminSessionReadingBook  string `json:"admin_session_reading_book"`
 	AdminNobody              string `json:"admin_nobody"`
 	AdminEndConfirm          string `json:"admin_end_confirm"`
 	AdminBtnEndConfirm       string `json:"admin_btn_end_confirm"`
 	AdminEndDone             string `json:"admin_end_done"`
+	AdminEndPollFailed       string `json:"admin_end_poll_failed"`
 	AdminRoundCancelledGroup string `json:"admin_round_cancelled_group"`
 	AdminUnsubTitle          string `json:"admin_unsub_title"`
 	AdminUnsubConfirm        string `json:"admin_unsub_confirm"`
