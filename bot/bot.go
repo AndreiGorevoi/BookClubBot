@@ -128,7 +128,7 @@ func (b *Bot) Run() {
 			}
 
 			// handle unsubscribed user's msg
-			if update.Message.Text != "/subscribe" && (s == nil || s.Archived == true) {
+			if !b.allowedWithoutMembership(update.Message.Text, update.Message.From.ID) && (s == nil || s.Archived == true) {
 				msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.NotSubscriber)
 				b.tgBot.Send(msg)
 				continue
@@ -142,6 +142,8 @@ func (b *Bot) Run() {
 				b.processCommand(&update, b.handleUnsubscribe)
 			case "/start_vote":
 				b.processCommand(&update, b.handleStartVote)
+			case "/admin":
+				b.processCommand(&update, b.handleAdmin)
 			case "/skip":
 				b.handleSkip(&update)
 			case "/help":
@@ -322,6 +324,20 @@ func (b *Bot) isAdmin(uid int64) bool {
 		if id == uid {
 			return true
 		}
+	}
+	return false
+}
+
+// allowedWithoutMembership reports whether a command may run for someone who is
+// not an active subscriber. Joining obviously must; so must the admin console,
+// since running the club is not the same thing as taking part in it and an
+// admin need never have subscribed.
+func (b *Bot) allowedWithoutMembership(text string, uid int64) bool {
+	switch text {
+	case "/subscribe":
+		return true
+	case "/admin":
+		return b.isAdmin(uid)
 	}
 	return false
 }
@@ -593,6 +609,12 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 	// Onboarding buttons live on subscriber DMs and don't require a session.
 	if strings.HasPrefix(cq.Data, "o:") {
 		b.handleOnboardingCallback(cq)
+		return
+	}
+
+	// Admin console buttons work with or without a round in flight.
+	if strings.HasPrefix(cq.Data, "a:") {
+		b.handleAdminCallback(cq)
 		return
 	}
 

@@ -100,11 +100,15 @@ A session moves through these statuses:
 | `voting` | Telegram poll is open (step 2) | yes |
 | `reading` | Winner chosen, club is reading (step 3, future) | yes |
 | `completed` | Round finished and archived | no |
-| `cancelled` | Aborted (e.g. fewer than 2 books gathered, bot removed) | no |
+| `cancelled` | Aborted (fewer than 2 books gathered, bot removed, or ended early from the admin console) | no |
 
 "Active" = the recovery loop is responsible for advancing it. There must be at
 most **one** session whose status is active at any time (enforced by a partial
 unique index — see [Indexes](#indexes)).
+
+An admin can end an active round early from the `/admin` console (see
+[Admin console](#admin-console)); it always lands on `cancelled`, whatever
+phase the round was in.
 
 ---
 
@@ -180,6 +184,35 @@ Implementation notes:
   safety net, while a live `PollAnswer` update can still close the poll
   immediately as the fast path. Both converge on the same idempotent close
   routine.
+
+---
+
+## Admin console
+
+`/admin` opens an inline-button panel in the caller's DM, restricted to the
+configured admins (`bot.isAdmin`, see [Configuration](../CLAUDE.md)). It is a
+single message edited in place: every button re-renders the same message rather
+than posting a new one.
+
+| View | Does |
+|---|---|
+| Members | Lists the active subscribers, paginated |
+| Round | Phase, deadline, who has submitted / is pending / skipped, votes cast |
+| End round | Cancels the active round after a confirmation, and tells the group |
+| Unsubscribe | Archives a chosen member after a confirmation |
+
+Two rules the console lives by:
+
+- **Authorization is re-checked on every press.** Inline buttons stay in chat
+  history forever, so a panel opened while someone was an admin must not keep
+  working after they are removed from the config.
+- **Destructive actions take two presses.** Ending a round and unsubscribing a
+  member each render a confirmation view first; nothing is written on the way
+  there.
+
+Ending a round writes the status under `bot.mu`, the same lock every other phase
+transition takes, so it cannot race the recovery loop. A round ended mid-vote
+also has its group poll stopped, best effort, so no open poll is left behind.
 
 ---
 

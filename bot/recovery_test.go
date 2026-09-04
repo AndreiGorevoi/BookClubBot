@@ -13,6 +13,9 @@ import (
 // fakeSessionRepo records the calls the recovery loop makes. Methods not needed
 // by a given test are no-ops.
 type fakeSessionRepo struct {
+	// active is what GetActiveSession returns; nil means no round is in flight.
+	active        *models.BookClubSession
+	activeErr     error
 	statusSet     []string
 	gatherNotify  int
 	votingNotify  int
@@ -28,7 +31,7 @@ func (f *fakeSessionRepo) CreateSession(context.Context, *models.BookClubSession
 	return nil
 }
 func (f *fakeSessionRepo) GetActiveSession(context.Context) (*models.BookClubSession, error) {
-	return nil, nil
+	return f.active, f.activeErr
 }
 func (f *fakeSessionRepo) UpdateParticipant(context.Context, primitive.ObjectID, *models.Participant) error {
 	return nil

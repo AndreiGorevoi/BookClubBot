@@ -52,7 +52,7 @@ type AppConfig struct {
 	Location *time.Location
 
 	// AdminIDs are the Telegram numeric user IDs allowed to run admin commands
-	// such as /start_vote. The ADMIN_IDS env var, when set, replaces the JSON
+	// such as /start_vote and the /admin console. The ADMIN_IDS env var, when set, replaces the JSON
 	// list. An empty list denies the admin commands to everyone (fail-closed).
 	AdminIDs []int64 `json:"admin_ids"`
 
@@ -89,7 +89,7 @@ func LoadConfig() (*AppConfig, error) {
 		return nil, err
 	}
 	if len(cfg.AdminIDs) == 0 {
-		log.Printf("WARNING: no admin IDs configured (admin_ids in config or %s env); /start_vote is disabled for everyone", adminIDsEnv)
+		log.Printf("WARNING: no admin IDs configured (admin_ids in config or %s env); the admin commands (/start_vote, /admin) are disabled for everyone", adminIDsEnv)
 	}
 
 	return cfg, nil
