@@ -128,7 +128,7 @@ func (b *Bot) Run() {
 			}
 
 			// handle unsubscribed user's msg
-			if update.Message.Text != "/subscribe" && (s == nil || s.Archived == true) {
+			if !b.allowedWithoutMembership(update.Message.Text, update.Message.From.ID) && (s == nil || s.Archived == true) {
 				msg := tgbotapi.NewMessage(update.Message.From.ID, b.messages.NotSubscriber)
 				b.tgBot.Send(msg)
 				continue
@@ -142,6 +142,8 @@ func (b *Bot) Run() {
 				b.processCommand(&update, b.handleUnsubscribe)
 			case "/start_vote":
 				b.processCommand(&update, b.handleStartVote)
+			case "/admin":
+				b.processCommand(&update, b.handleAdmin)
 			case "/skip":
 				b.handleSkip(&update)
 			case "/help":
@@ -322,6 +324,20 @@ func (b *Bot) isAdmin(uid int64) bool {
 		if id == uid {
 			return true
 		}
+	}
+	return false
+}
+
+// allowedWithoutMembership reports whether a command may run for someone who is
+// not an active subscriber. Joining obviously must; so must the admin console,
+// since running the club is not the same thing as taking part in it and an
+// admin need never have subscribed.
+func (b *Bot) allowedWithoutMembership(text string, uid int64) bool {
+	switch text {
+	case "/subscribe":
+		return true
+	case "/admin":
+		return b.isAdmin(uid)
 	}
 	return false
 }
@@ -596,6 +612,12 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	// Admin console buttons work with or without a round in flight.
+	if strings.HasPrefix(cq.Data, "a:") {
+		b.handleAdminCallback(cq)
+		return
+	}
+
 	session, err := b.sessionRepository.GetActiveSession(context.Background())
 	if err != nil {
 		log.Printf("cannot get active session for callback: %v", err)
@@ -839,6 +861,14 @@ func (b *Bot) runTelegramPollFlow() {
 	b.msgAboutGatheringBooks(session)
 
 	if err := b.runTelegramPoll(session); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			// The round stopped being in voting while the poll was going out — an
+			// admin ended it from the console. runTelegramPoll has already closed
+			// the poll it sent; the session is terminal and must stay that way, so
+			// there is nothing left to cancel here.
+			log.Printf("round %s was ended while its poll was starting", session.ID.Hex())
+			return
+		}
 		log.Printf("ERROR: cannot run poll: %v\n", err)
 		// Could not start a poll. End the round so a new one can be started, and
 		// tell the group why when the cause is too few books (rather than
@@ -903,7 +933,27 @@ func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
 		StartedAt:         now,
 		OptionOwners:      owners,
 	}
-	return b.sessionRepository.StartVoting(context.Background(), session.ID, voting)
+	if err := b.sessionRepository.StartVoting(context.Background(), session.ID, voting); err != nil {
+		// The poll is already in the group but no session will reference it —
+		// nothing would ever close it or count its votes. Take it back down.
+		if stopErr := b.stopPoll(msg.MessageID); stopErr != nil {
+			log.Printf("cannot close the poll of session %s that failed to start: %v", session.ID.Hex(), stopErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// stopPoll closes a poll in the group chat. Callers that need the final vote
+// counts use StopPoll directly; this is for the paths that only need the poll
+// gone.
+func (b *Bot) stopPoll(messageID int) error {
+	stop := tgbotapi.StopPollConfig{BaseEdit: tgbotapi.BaseEdit{
+		ChatID:    b.cfg.GroupId,
+		MessageID: messageID,
+	}}
+	_, err := b.tgBot.StopPoll(stop)
+	return err
 }
 
 // closeTelegramPoll stops the poll, records the winner(s) and completes the

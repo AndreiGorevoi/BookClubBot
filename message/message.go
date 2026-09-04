@@ -56,6 +56,47 @@ type LocalizedMessages struct {
 	OnboardingAskGenres                string `json:"onboarding_ask_genres"`
 	OnboardingDone                     string `json:"onboarding_done"`
 	BtnOnboardingSkip                  string `json:"btn_onboarding_skip"`
+
+	// Admin console (bot/admin.go).
+	AdminOnly                string `json:"admin_only"`
+	AdminPanelTitle          string `json:"admin_panel_title"`
+	AdminStatusLine          string `json:"admin_status_line"`
+	AdminStatusUnknown       string `json:"admin_status_unknown"`
+	AdminNoActiveSession     string `json:"admin_no_active_session"`
+	AdminPhaseGathering      string `json:"admin_phase_gathering"`
+	AdminPhaseVoting         string `json:"admin_phase_voting"`
+	AdminPhaseReading        string `json:"admin_phase_reading"`
+	AdminBtnMembers          string `json:"admin_btn_members"`
+	AdminBtnSession          string `json:"admin_btn_session"`
+	AdminBtnUnsubscribe      string `json:"admin_btn_unsubscribe"`
+	AdminBtnEndRound         string `json:"admin_btn_end_round"`
+	AdminBtnBack             string `json:"admin_btn_back"`
+	AdminBtnPrev             string `json:"admin_btn_prev"`
+	AdminBtnNext             string `json:"admin_btn_next"`
+	AdminMembersTitle        string `json:"admin_members_title"`
+	AdminMembersEmpty        string `json:"admin_members_empty"`
+	AdminMembersPage         string `json:"admin_members_page"`
+	AdminSessionHeader       string `json:"admin_session_header"`
+	AdminSessionDeadline     string `json:"admin_session_deadline"`
+	AdminSessionDeadlinePast string `json:"admin_session_deadline_past"`
+	AdminSessionSubmitted    string `json:"admin_session_submitted"`
+	AdminSessionPending      string `json:"admin_session_pending"`
+	AdminSessionSkipped      string `json:"admin_session_skipped"`
+	AdminSessionVotes        string `json:"admin_session_votes"`
+	AdminSessionNoPoll       string `json:"admin_session_no_poll"`
+	AdminSessionReadingBook  string `json:"admin_session_reading_book"`
+	AdminNobody              string `json:"admin_nobody"`
+	AdminEndConfirm          string `json:"admin_end_confirm"`
+	AdminBtnEndConfirm       string `json:"admin_btn_end_confirm"`
+	AdminEndDone             string `json:"admin_end_done"`
+	AdminEndPollFailed       string `json:"admin_end_poll_failed"`
+	AdminRoundCancelledGroup string `json:"admin_round_cancelled_group"`
+	AdminUnsubTitle          string `json:"admin_unsub_title"`
+	AdminUnsubConfirm        string `json:"admin_unsub_confirm"`
+	AdminBtnUnsubConfirm     string `json:"admin_btn_unsub_confirm"`
+	AdminUnsubDone           string `json:"admin_unsub_done"`
+	AdminUnsubGone           string `json:"admin_unsub_gone"`
+	AdminActionFailed        string `json:"admin_action_failed"`
 }
 
 func LoadMessaged() (*LocalizedMessages, error) {

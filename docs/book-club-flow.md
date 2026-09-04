@@ -100,11 +100,15 @@ A session moves through these statuses:
 | `voting` | Telegram poll is open (step 2) | yes |
 | `reading` | Winner chosen, club is reading (step 3, future) | yes |
 | `completed` | Round finished and archived | no |
-| `cancelled` | Aborted (e.g. fewer than 2 books gathered, bot removed) | no |
+| `cancelled` | Aborted (fewer than 2 books gathered, bot removed, or ended early from the admin console) | no |
 
 "Active" = the recovery loop is responsible for advancing it. There must be at
 most **one** session whose status is active at any time (enforced by a partial
 unique index — see [Indexes](#indexes)).
+
+An admin can end an active round early from the `/admin` console (see
+[Admin console](#admin-console)); it always lands on `cancelled`, whatever
+phase the round was in.
 
 ---
 
@@ -180,6 +184,51 @@ Implementation notes:
   safety net, while a live `PollAnswer` update can still close the poll
   immediately as the fast path. Both converge on the same idempotent close
   routine.
+
+---
+
+## Admin console
+
+`/admin` opens an inline-button panel in the caller's DM, restricted to the
+configured admins (`bot.isAdmin`, see [Configuration](../CLAUDE.md)). It is a
+single message edited in place: every button re-renders the same message rather
+than posting a new one.
+
+| View | Does |
+|---|---|
+| Members | Lists the active subscribers, paginated |
+| Round | Phase, deadline, who has submitted / is pending / skipped, votes cast |
+| End round | Cancels the active round after a confirmation, and tells the group |
+| Unsubscribe | Archives a chosen member after a confirmation |
+
+Two rules the console lives by:
+
+- **Authorization is re-checked on every press.** Inline buttons stay in chat
+  history forever, so a panel opened while someone was an admin must not keep
+  working after they are removed from the config.
+- **Destructive actions take two presses.** Ending a round and unsubscribing a
+  member each render a confirmation view first; nothing is written on the way
+  there.
+
+Ending a round writes the status under `bot.mu`, the same lock every other phase
+transition takes, so it cannot race the recovery loop. Two ordering rules make
+that safe:
+
+- **The poll is closed before the status becomes terminal**, the same way
+  `closeTelegramPoll` completes a round only after its own `StopPoll` succeeds.
+  Once a session is cancelled it is no longer active, so nothing would ever
+  retry the stop; a failed stop therefore leaves the round alone and the admin
+  can press again.
+- **`StartVoting` only writes to a session that still holds the active lock.**
+  A poll is sent to Telegram before the voting sub-document is persisted, so a
+  round can be ended in that window; without the guard the late write would put
+  `status` and `activeLock` back and resurrect it. The refused write comes back
+  as `ErrNotFound`, and the poll that was already sent is closed.
+
+Unsubscribing a member also releases the round in flight: a member still owing a
+book is moved to `skipped`, so the reminders stop mentioning them and
+`allBooksChosen` is no longer waiting on them. A member who already submitted
+keeps their book on the ballot.
 
 ---
 

@@ -331,3 +331,34 @@ func cleanSession(clear func(), mongoDB *mongo.Database) {
 	clear()
 	mongo_helpers.DropCollection(mongoDB, sessions_collection)
 }
+
+func TestStartVoting_DoesNotResurrectAnEndedSession(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	mongoDB, clear := mongo_helpers.CreateTestMongoDB(t)
+	defer cleanSession(clear, mongoDB)
+	repo := newSessionRepo(t, mongoDB)
+	ctx := testCtx(t)
+
+	session := newGatheringSession(100)
+	require.NoError(t, repo.CreateSession(ctx, session))
+
+	// The round ends (an admin cancels it from the console) while a poll is on
+	// its way to Telegram.
+	require.NoError(t, repo.SetStatus(ctx, session.ID, models.StatusCancelled))
+
+	// The in-flight poll must not bring the round back to life.
+	err := repo.StartVoting(ctx, session.ID, newVoting())
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	stored, err := repo.GetSessionById(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StatusCancelled, stored.Status)
+	assert.Nil(t, stored.Voting)
+
+	active, err := repo.GetActiveSession(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, active, "a cancelled round must stay out of the way of the next one")
+}

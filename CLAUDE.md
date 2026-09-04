@@ -35,7 +35,7 @@ Required env vars:
 - `ADMIN_IDS` — optional, comma-separated Telegram numeric user ids (`123,456`); when set it replaces the `admin_ids` list from the JSON config
 
 **Admins** (`admin_ids` in the JSON config, or the `ADMIN_IDS` env override) are the
-only users allowed to run `/start_vote`; the check is `Bot.isAdmin`. An empty list
+only users allowed to run `/start_vote` and `/admin`; the check is `Bot.isAdmin`. An empty list
 denies the command to everyone and logs a warning at startup (fail-closed). A
 malformed `ADMIN_IDS` value fails startup.
 
@@ -77,9 +77,14 @@ enforced by a unique partial index (see `docs/book-club-flow.md`).
   no per-deadline `time.Sleep` goroutines.
 
 The main loop in `bot.Run()` dispatches Telegram updates: commands (`/subscribe`,
-`/start_vote`, `/skip`, `/help`) to handlers, free-text messages to
+`/start_vote`, `/admin`, `/skip`, `/help`) to handlers, free-text messages to
 `handleUserMsg`, and `PollAnswer` updates to vote counting. Phase transitions are
 serialized under `bot.mu`.
+
+- **Admin console** (`bot/admin.go`) — `/admin` opens an inline-button panel
+  (members, round status, end round, unsubscribe a member) in the admin's DM.
+  Callbacks use the `a:` prefix, re-check `isAdmin` on every press, and edit the
+  one panel message in place. See `docs/book-club-flow.md`.
 
 ### Repository layer
 
