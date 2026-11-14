@@ -54,6 +54,7 @@ const (
 	StepBook        = "book"
 	StepAuthor      = "author"
 	StepDescription = "description"
+	StepPages       = "pages"
 	StepImage       = "image"
 	StepReview      = "review"
 	StepDone        = "done"
@@ -73,7 +74,11 @@ type Book struct {
 	Title       string `bson:"title"`
 	Author      string `bson:"author"`
 	Description string `bson:"description"`
-	PhotoID     string `bson:"photoId"`
+	// Pages is the book's page count. Zero means unknown: books submitted
+	// before the page-count step existed carry no value, and every renderer
+	// leaves the page count out for them.
+	Pages   int    `bson:"pages"`
+	PhotoID string `bson:"photoId"`
 }
 
 // Participant holds one subscriber's in-progress conversation state during book

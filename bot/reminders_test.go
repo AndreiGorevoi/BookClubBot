@@ -113,6 +113,7 @@ func TestPendingParticipants(t *testing.T) {
 		models.StepBook,
 		models.StepAuthor,
 		models.StepDescription,
+		models.StepPages,
 		models.StepImage,
 		models.StepReview,
 		models.StepDone,
@@ -132,6 +133,7 @@ func TestPendingParticipants(t *testing.T) {
 		models.StepBook,
 		models.StepAuthor,
 		models.StepDescription,
+		models.StepPages,
 		models.StepImage,
 		models.StepReview,
 	}, steps)

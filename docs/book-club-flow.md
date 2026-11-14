@@ -24,7 +24,9 @@ time** (a second `/start_vote` while one is live is rejected).
    `admin_ids` / the `ADMIN_IDS` env var; anyone else is refused).
 2. The bot DMs every active subscriber and walks each one through the book
    submission conversation, one question at a time:
-   `title → author → description → cover image → review → done`.
+   `title → author → description → page count → cover image → review → done`.
+   The page count must be a whole number from 1 to 10000; anything else is
+   rejected and the question is asked again (the step does not advance).
    At the **review** step the bot shows a summary of everything entered with two
    inline buttons: confirm (submit the book, → `done`) or start over (discard the
    book and go back to `title`). (`/skip` opts a participant out.)
@@ -259,6 +261,7 @@ MongoDB database: **`book_club_boot`**. New collection: **`book_club_sessions`**
           "title": "The Pragmatic Programmer",
           "author": "",
           "description": "",
+          "pages": 0,
           "photoId": ""
         },
         "invitedAt": "2026-06-01T10:00:00Z",
@@ -327,7 +330,7 @@ submission; the poll is built from participants whose `step` is `done`.
 | `firstName` | string | Snapshot at invite time |
 | `lastName` | string | Snapshot |
 | `nick` | string | Snapshot |
-| `step` | string | `book` \| `author` \| `description` \| `image` \| `review` \| `done` \| `skipped` |
+| `step` | string | `book` \| `author` \| `description` \| `pages` \| `image` \| `review` \| `done` \| `skipped` |
 | `book` | object \| null | Partial while in progress, complete when `step == done` |
 | `invitedAt` | date | When the bot DMed this participant |
 | `submittedAt` | date \| null | When `step` reached `done` |
@@ -339,6 +342,7 @@ submission; the poll is built from participants whose `step` is `done`.
 | `title` | string | |
 | `author` | string | |
 | `description` | string | |
+| `pages` | int | Page count, 1–10000; `0` = unknown (books submitted before the step existed) |
 | `photoId` | string | Telegram `FileID`; empty string if no cover submitted |
 
 ### `voting`

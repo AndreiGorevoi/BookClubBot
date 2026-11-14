@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -468,6 +469,19 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 
 	case models.StepDescription:
 		p.Book.Description = update.Message.Text
+		p.Step = models.StepPages
+		b.persistParticipant(session.ID, p)
+		b.sendMessage(uid, b.messages.AskPageCount)
+
+	case models.StepPages:
+		pages, ok := parsePageCount(update.Message.Text)
+		if !ok {
+			// Stay on this step: nothing is persisted, so the next message is
+			// read as another attempt at the page count.
+			b.sendMessage(uid, b.messages.InvalidPageCount)
+			return
+		}
+		p.Book.Pages = pages
 		p.Step = models.StepImage
 		b.persistParticipant(session.ID, p)
 		// The cover is optional, so this step offers the "no cover" button.
@@ -488,6 +502,21 @@ func (b *Bot) handleParticipantAnswer(session *models.BookClubSession, p *models
 	case models.StepDone:
 		b.sendMessage(uid, b.messages.VotingAlreadyCompleted)
 	}
+}
+
+// maxPageCount bounds the page count a member can enter. It is far above any
+// real book and only exists to reject typos and nonsense like "100000000".
+const maxPageCount = 10000
+
+// parsePageCount reads a page count typed by a member: a whole number from 1 to
+// maxPageCount, surrounding whitespace allowed. Anything else — words, "~300",
+// a photo with no text — is rejected so the bot can ask again.
+func parsePageCount(text string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil || n < 1 || n > maxPageCount {
+		return 0, false
+	}
+	return n, true
 }
 
 // finishGathering completes a participant's submission (with or without a
@@ -533,14 +562,18 @@ func (b *Bot) sendReview(p *models.Participant) {
 // the same failure on every message until they give up or /skip.
 func (b *Bot) reviewSummary(p *models.Participant, cover string) string {
 	title, author, description := p.Book.Title, p.Book.Author, p.Book.Description
+	pages := b.messages.PagesUnknown
+	if p.Book.Pages > 0 {
+		pages = strconv.Itoa(p.Book.Pages)
+	}
 
-	// Shrink the fields rather than the finished message, so the cover line and
-	// the labels around them survive; the description gives way first, since it
-	// is the field members actually paste walls of text into.
-	overhead := utf16Len(fmt.Sprintf(b.messages.BookReviewSummary, "", "", "", cover))
+	// Shrink the fields rather than the finished message, so the page count, the
+	// cover line and the labels around them survive; the description gives way
+	// first, since it is the field members actually paste walls of text into.
+	overhead := utf16Len(fmt.Sprintf(b.messages.BookReviewSummary, "", "", "", pages, cover))
 	fitFields(telegramMessageMaxLen-overhead, elide, &description, &title, &author)
 
-	summary := fmt.Sprintf(b.messages.BookReviewSummary, title, author, description, cover)
+	summary := fmt.Sprintf(b.messages.BookReviewSummary, title, author, description, pages, cover)
 	// The fields are bounded above, so this only guards against a template that
 	// cannot fit on its own.
 	return truncateUTF16(summary, telegramMessageMaxLen)
@@ -1129,14 +1162,24 @@ const pollOptionMaxLen = 100
 // pollOptionMaxLen. The same rendering is used to build the poll and to match
 // winners back to books, so they must stay in sync — the truncation lives here
 // so the built option and the matched option are identical.
+//
+// A known page count is appended as a suffix (" (320 стр.)") that is kept whole:
+// when the option is too long it is the title and author that are cut, so the
+// page count stays readable on the ballot.
 func (b *Bot) pollOptionFor(bk *models.Book) string {
-	opt := b.bookLabel(bk.Title, bk.Author) + "\n"
+	suffix := ""
+	if bk.Pages > 0 {
+		suffix = " (" + fmt.Sprintf(b.messages.PagesShort, bk.Pages) + ")"
+	}
+	label := b.bookLabel(bk.Title, bk.Author)
+	opt := label + suffix + "\n"
 	if utf16Len(opt) <= pollOptionMaxLen {
 		return opt
 	}
 	// The ellipsis is one UTF-16 unit, so leave one unit of headroom for it, and
 	// drop trailing whitespace so the cut does not read as "word …".
-	return strings.TrimRight(truncateUTF16(opt, pollOptionMaxLen-1), " \t\n") + "\u2026"
+	room := pollOptionMaxLen - 1 - utf16Len(suffix)
+	return strings.TrimRight(truncateUTF16(label, room), " \t\n") + "\u2026" + suffix
 }
 
 // notifyPollDeadline messages the group before the poll deadline.

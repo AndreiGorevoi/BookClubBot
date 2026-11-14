@@ -25,6 +25,7 @@ type book struct {
 	title       string
 	author      string
 	description string
+	pages       int
 	photoId     string
 }
 
@@ -41,6 +42,7 @@ func viewParticipant(p *models.Participant) *participant {
 			title:       p.Book.Title,
 			author:      p.Book.Author,
 			description: p.Book.Description,
+			pages:       p.Book.Pages,
 			photoId:     p.Book.PhotoID,
 		}
 	}
@@ -56,19 +58,25 @@ func (p *participant) bookCaption() string {
 	author := escapeMarkdown(p.book.author)
 	description := escapeMarkdown(p.book.description)
 
-	budget := telegramCaptionMaxLen - utf16Len(bookCaptionText("", "", ""))
+	budget := telegramCaptionMaxLen - utf16Len(bookCaptionText("", "", p.book.pages, ""))
 	fitFields(budget, elideEscaped, &description, &title, &author)
 
-	return bookCaptionText(title, author, description)
+	return bookCaptionText(title, author, p.book.pages, description)
 }
 
-// bookCaptionText lays out the card. Everything it adds — the labels and their
-// bold markers — is fixed text, so it always parses.
-func bookCaptionText(title, author, description string) string {
+// bookCaptionText lays out the card. Everything it adds — the labels, their
+// bold markers and the page count, a number — is fixed text, so it always
+// parses. The page line is left out when the count is unknown (zero).
+func bookCaptionText(title, author string, pages int, description string) string {
+	pagesLine := ""
+	if pages > 0 {
+		pagesLine = fmt.Sprintf("📄 *Страниц*: %d\n", pages)
+	}
 	return fmt.Sprintf(
-		"📚 *Название*: %s\n👤 *Автор*: %s\n📝 *Описание*: %s",
+		"📚 *Название*: %s\n👤 *Автор*: %s\n%s📝 *Описание*: %s",
 		title,
 		author,
+		pagesLine,
 		description,
 	)
 }

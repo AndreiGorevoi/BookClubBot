@@ -108,7 +108,8 @@ func TestBookCaptionStaysWithinTelegramLimit(t *testing.T) {
 
 func TestReviewSummaryFitsTelegramLimit(t *testing.T) {
 	b := &Bot{messages: &message.LocalizedMessages{
-		BookReviewSummary: "Проверь:\n\n📚 Название: %s\n👤 Автор: %s\n📝 Описание: %s\n🖼 Обложка: %s",
+		BookReviewSummary: "Проверь:\n\n📚 Название: %s\n👤 Автор: %s\n📝 Описание: %s\n📄 Страниц: %s\n🖼 Обложка: %s",
+		PagesUnknown:      "не указано",
 	}}
 
 	t.Run("a normal submission is left alone", func(t *testing.T) {
@@ -138,10 +139,12 @@ func TestReviewSummaryFitsTelegramLimit(t *testing.T) {
 	})
 
 	t.Run("a long title does not cost the description or the cover line", func(t *testing.T) {
-		// The title is what overflows here, so the description — 15 characters —
-		// must not be the field that pays for it.
+		// A title that nearly fills the message on its own must not crowd out the
+		// short description or the lines after it. (fitFields gives the
+		// description away first, so a title long enough to overflow the whole
+		// message would cost it; that case is the pathological one below.)
 		p := &models.Participant{Book: &models.Book{
-			Title:       strings.Repeat("я", 4000),
+			Title:       strings.Repeat("я", 3950),
 			Author:      "Герберт",
 			Description: "Пески Арракиса.",
 		}}
