@@ -17,6 +17,10 @@ type LocalizedMessages struct {
 	NotParticipantCurrentVoting        string `json:"not_participant_current_voting"`
 	WhoIsAuthor                        string `json:"who_is_author"`
 	WriteBookDescription               string `json:"write_book_description"`
+	AskPageCount                       string `json:"ask_page_count"`
+	InvalidPageCount                   string `json:"invalid_page_count"`
+	PagesShort                         string `json:"pages_short"`
+	PagesUnknown                       string `json:"pages_unknown"`
 	AttachCoverPhoto                   string `json:"attach_cover_photo"`
 	BookAddedToNextVoting              string `json:"book_added_to_next_voting"`
 	ImageMissingBookAdded              string `json:"image_missing_book_added"`
