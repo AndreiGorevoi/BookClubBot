@@ -72,7 +72,13 @@ time** (a second `/start_vote` while one is live is rejected).
 
 ### Step 2 — Voting
 
-1. The bot posts the collected books as a native Telegram poll in the group.
+1. The bot posts the collected books to the group as an album of book cards,
+   then as a native Telegram poll. Both use one **ballot order**, shuffled once
+   per round (`ballotOrder`): the stored participant order is the subscriber
+   order, so following it in either message would reveal who proposed which
+   book. The ballot is cut to ten books (Telegram's limit for both poll options
+   and a media group) after the shuffle, so any books left out are random and
+   every book shown can be voted for.
 2. The poll has a **deadline**. It closes when the deadline passes **or** when
    every eligible subscriber has voted, whichever comes first.
 3. A pre-deadline **reminder** is sent to the group.
@@ -363,7 +369,8 @@ submission; the poll is built from participants whose `step` is `done`.
 > rendered option text cannot: options are capped at Telegram's 100-unit limit,
 > so two books that differ only past the cap render identically. The array is
 > written in the same (shuffled, ten-option) order the options were sent, and it
-> must stay in step with them — see `extractPollOptions` and `runTelegramPoll`.
+> must stay in step with them — see `ballotOrder`, `extractPollOptions` and
+> `runTelegramPoll`.
 > A poll started before this field existed has it empty, and `winnersFromPoll`
 > falls back to text matching for those.
 

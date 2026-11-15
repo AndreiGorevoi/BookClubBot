@@ -145,7 +145,7 @@ func TestRunTelegramPollNotEnoughBooks(t *testing.T) {
 		&models.Participant{SubscriberID: 2, Step: models.StepSkipped},
 	)
 
-	err := b.runTelegramPoll(session)
+	err := b.runTelegramPoll(session, ballotOrder(session))
 	assert.ErrorIs(t, err, errNotEnoughBooks)
 }
 
@@ -157,7 +157,7 @@ func TestExtractPollOptions(t *testing.T) {
 		&models.Participant{SubscriberID: 3, Step: models.StepImage, Book: &models.Book{Title: "Partial"}}, // not done
 	)
 
-	opts := b.extractPollOptions(session)
+	opts := b.extractPollOptions(ballotOrder(session))
 	assert.Equal(t, []pollOption{{Text: "Book: Dune. Author: Herbert\n", OwnerID: 1}}, opts)
 }
 

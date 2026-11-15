@@ -827,8 +827,10 @@ func (b *Bot) ballotLabels(session *models.BookClubSession) []string {
 	return labels
 }
 
-// msgAboutGatheringBooks sends a media group of the gathered books to the group.
-func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
+// msgAboutGatheringBooks sends a media group of the ballot's books to the
+// group, in ballot order — the same order as the poll options, so the album
+// reveals nothing the poll does not.
+func (b *Bot) msgAboutGatheringBooks(ballot []*models.Participant) {
 	if b.cfg.GroupId == 0 {
 		log.Println("cannot send a msg about gathering books as GroupId is not innit")
 		return
@@ -836,10 +838,7 @@ func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
 
 	groupId := b.cfg.GroupId
 	var mediaItems []interface{}
-	for _, p := range session.Gathering.Participants {
-		if p.Step != models.StepDone || p.Book == nil {
-			continue
-		}
+	for _, p := range ballot {
 		vp := viewParticipant(p)
 		img := vp.bookImage()
 		img.Caption = vp.bookCaption()
@@ -852,20 +851,15 @@ func (b *Bot) msgAboutGatheringBooks(session *models.BookClubSession) {
 		return
 	}
 
-	for i := 0; i < len(mediaItems); i += 10 {
-		end := i + 10
-		if end > len(mediaItems) {
-			end = len(mediaItems)
-		}
-		batch := mediaItems[i:end]
-		if i == 0 && len(batch) < 2 {
-			log.Println("cannot send message about gathered book as it less than 2")
-			return
-		}
-		msg := tgbotapi.NewMediaGroup(groupId, batch)
-		if _, err := b.tgBot.Send(msg); err != nil {
-			log.Printf("ERROR: %s\n", err)
-		}
+	// ballotOrder caps the ballot at maxBallotSize, which is also the media
+	// group limit, so the whole album goes out as one message.
+	if len(mediaItems) < 2 {
+		log.Println("cannot send message about gathered book as it less than 2")
+		return
+	}
+	msg := tgbotapi.NewMediaGroup(groupId, mediaItems)
+	if _, err := b.tgBot.Send(msg); err != nil {
+		log.Printf("ERROR: %s\n", err)
 	}
 }
 
@@ -891,9 +885,13 @@ func (b *Bot) runTelegramPollFlow() {
 	}
 	b.mu.Unlock()
 
-	b.msgAboutGatheringBooks(session)
+	// One shuffle shared by the album and the poll: the stored participant order
+	// is the subscriber order, so showing either in it would reveal who proposed
+	// which book.
+	ballot := ballotOrder(session)
+	b.msgAboutGatheringBooks(ballot)
 
-	if err := b.runTelegramPoll(session); err != nil {
+	if err := b.runTelegramPoll(session, ballot); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			// The round stopped being in voting while the poll was going out — an
 			// admin ended it from the console. runTelegramPoll has already closed
@@ -920,20 +918,16 @@ func (b *Bot) runTelegramPollFlow() {
 }
 
 // runTelegramPoll creates and starts a poll for choosing a book in the group,
-// then persists the voting sub-document.
-func (b *Bot) runTelegramPoll(session *models.BookClubSession) error {
+// then persists the voting sub-document. The options follow ballot, the order
+// the album was sent in.
+func (b *Bot) runTelegramPoll(session *models.BookClubSession, ballot []*models.Participant) error {
 	if b.cfg.GroupId == 0 {
 		return fmt.Errorf("cannot run telegram poll as groupId is not innit")
 	}
 
-	options := b.extractPollOptions(session)
+	options := b.extractPollOptions(ballot)
 	if len(options) < 2 {
 		return errNotEnoughBooks
-	}
-
-	if len(options) > 10 {
-		log.Println("cannot use more than ten books in the poll... keeping the first ten")
-		options = options[0:10]
 	}
 
 	books := make([]string, len(options))
@@ -1068,15 +1062,32 @@ func finishedParticipants(session *models.BookClubSession) []*models.Participant
 	return out
 }
 
-// extractPollOptions builds the shuffled poll options from the finished
-// submissions.
-func (b *Bot) extractPollOptions(session *models.BookClubSession) []pollOption {
-	finished := finishedParticipants(session)
-	opts := make([]pollOption, 0, len(finished))
-	for _, p := range finished {
+// maxBallotSize is how many books one round can put to the vote: Telegram
+// allows at most ten poll options, and at most ten items in a media group.
+const maxBallotSize = 10
+
+// ballotOrder returns the finished submissions in a fresh random order, cut to
+// maxBallotSize. It is computed once per round and drives both the album and
+// the poll, so the two list the same books in the same order and neither
+// follows the stored participant order. Cutting after the shuffle means the
+// books left out are random too, and none is shown without being votable.
+func ballotOrder(session *models.BookClubSession) []*models.Participant {
+	ballot := shuffleSlice(finishedParticipants(session))
+	if len(ballot) > maxBallotSize {
+		log.Printf("%d books submitted, keeping a random %d for the ballot", len(ballot), maxBallotSize)
+		ballot = ballot[:maxBallotSize]
+	}
+	return ballot
+}
+
+// extractPollOptions builds the poll options from the ballot, keeping its
+// order.
+func (b *Bot) extractPollOptions(ballot []*models.Participant) []pollOption {
+	opts := make([]pollOption, 0, len(ballot))
+	for _, p := range ballot {
 		opts = append(opts, pollOption{Text: b.pollOptionFor(p.Book), OwnerID: p.SubscriberID})
 	}
-	return shuffleSlice(opts)
+	return opts
 }
 
 // winnersFromPoll maps the winning poll options back to the books that produced
