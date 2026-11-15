@@ -24,6 +24,8 @@ type fakeSessionRepo struct {
 	remindersSent int
 	remindersErr  error
 	created       int
+	// voting is the sub-document handed to the last StartVoting call.
+	voting *models.Voting
 }
 
 func (f *fakeSessionRepo) CreateSession(context.Context, *models.BookClubSession) error {
@@ -37,8 +39,9 @@ func (f *fakeSessionRepo) UpdateParticipant(context.Context, primitive.ObjectID,
 	return nil
 }
 func (f *fakeSessionRepo) AddVoter(context.Context, primitive.ObjectID, int64) error { return nil }
-func (f *fakeSessionRepo) StartVoting(context.Context, primitive.ObjectID, *models.Voting) error {
+func (f *fakeSessionRepo) StartVoting(_ context.Context, _ primitive.ObjectID, v *models.Voting) error {
 	f.startedVoting++
+	f.voting = v
 	return nil
 }
 func (f *fakeSessionRepo) SetWinners(context.Context, primitive.ObjectID, []models.Winner) error {
