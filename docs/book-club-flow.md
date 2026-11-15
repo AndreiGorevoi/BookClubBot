@@ -76,7 +76,9 @@ time** (a second `/start_vote` while one is live is rejected).
    then as a native Telegram poll. Both use one **ballot order**, shuffled once
    per round (`ballotOrder`): the stored participant order is the subscriber
    order, so following it in either message would reveal who proposed which
-   book.
+   book. The ballot is cut to ten books (Telegram's limit for both poll options
+   and a media group) after the shuffle, so any books left out are random and
+   every book shown can be voted for.
 2. The poll has a **deadline**. It closes when the deadline passes **or** when
    every eligible subscriber has voted, whichever comes first.
 3. A pre-deadline **reminder** is sent to the group.

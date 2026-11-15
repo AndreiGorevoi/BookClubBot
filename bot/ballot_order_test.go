@@ -91,3 +91,23 @@ func TestBallotOrder_SkipsUnfinished(t *testing.T) {
 	require.Len(t, ballot, 1)
 	assert.Equal(t, int64(1), ballot[0].SubscriberID)
 }
+
+func TestBallotOrder_CapsAlbumAndPollTogether(t *testing.T) {
+	album, poll := runRound(t, 12)
+	assert.Len(t, poll, maxBallotSize)
+	assert.Equal(t, poll, album, "every book in the album must be votable, and vice versa")
+}
+
+func TestBallotOrder_CapIsRandom(t *testing.T) {
+	// Cutting before the shuffle would always drop books 11 and 12.
+	for i := 0; i < 20; i++ {
+		ballot := ballotOrder(gatheringSession(12))
+		require.Len(t, ballot, maxBallotSize)
+		for _, p := range ballot {
+			if p.SubscriberID > maxBallotSize {
+				return
+			}
+		}
+	}
+	t.Fatal("the books past the cap never made the ballot")
+}

@@ -851,20 +851,15 @@ func (b *Bot) msgAboutGatheringBooks(ballot []*models.Participant) {
 		return
 	}
 
-	for i := 0; i < len(mediaItems); i += 10 {
-		end := i + 10
-		if end > len(mediaItems) {
-			end = len(mediaItems)
-		}
-		batch := mediaItems[i:end]
-		if i == 0 && len(batch) < 2 {
-			log.Println("cannot send message about gathered book as it less than 2")
-			return
-		}
-		msg := tgbotapi.NewMediaGroup(groupId, batch)
-		if _, err := b.tgBot.Send(msg); err != nil {
-			log.Printf("ERROR: %s\n", err)
-		}
+	// ballotOrder caps the ballot at maxBallotSize, which is also the media
+	// group limit, so the whole album goes out as one message.
+	if len(mediaItems) < 2 {
+		log.Println("cannot send message about gathered book as it less than 2")
+		return
+	}
+	msg := tgbotapi.NewMediaGroup(groupId, mediaItems)
+	if _, err := b.tgBot.Send(msg); err != nil {
+		log.Printf("ERROR: %s\n", err)
 	}
 }
 
@@ -933,11 +928,6 @@ func (b *Bot) runTelegramPoll(session *models.BookClubSession, ballot []*models.
 	options := b.extractPollOptions(ballot)
 	if len(options) < 2 {
 		return errNotEnoughBooks
-	}
-
-	if len(options) > 10 {
-		log.Println("cannot use more than ten books in the poll... keeping the first ten")
-		options = options[0:10]
 	}
 
 	books := make([]string, len(options))
@@ -1072,12 +1062,22 @@ func finishedParticipants(session *models.BookClubSession) []*models.Participant
 	return out
 }
 
-// ballotOrder returns the finished submissions in a fresh random order. It is
-// computed once per round and drives both the album and the poll, so the two
-// list the books in the same order and neither follows the stored participant
-// order.
+// maxBallotSize is how many books one round can put to the vote: Telegram
+// allows at most ten poll options, and at most ten items in a media group.
+const maxBallotSize = 10
+
+// ballotOrder returns the finished submissions in a fresh random order, cut to
+// maxBallotSize. It is computed once per round and drives both the album and
+// the poll, so the two list the same books in the same order and neither
+// follows the stored participant order. Cutting after the shuffle means the
+// books left out are random too, and none is shown without being votable.
 func ballotOrder(session *models.BookClubSession) []*models.Participant {
-	return shuffleSlice(finishedParticipants(session))
+	ballot := shuffleSlice(finishedParticipants(session))
+	if len(ballot) > maxBallotSize {
+		log.Printf("%d books submitted, keeping a random %d for the ballot", len(ballot), maxBallotSize)
+		ballot = ballot[:maxBallotSize]
+	}
+	return ballot
 }
 
 // extractPollOptions builds the poll options from the ballot, keeping its
